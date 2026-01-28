@@ -1,0 +1,78 @@
+# Agent OS Standards Index
+
+database:
+  supabase-best-practices:
+    description: Comprehensive Supabase connection, querying, pagination, batch ops, error handling, and architecture patterns
+  types-structure:
+    description: Row/Insert/Update types with convenience aliases
+
+storage:
+  media-paths:
+    description: "Consistent paths for avatars, videos, projects"
+  provider-pattern:
+    description: "Interface + factory for local/cloud storage"
+  zadara-ngos:
+    description: "Zadara NGOS connection, S3 config, upload/download flow, API proxy pattern"
+ 
+api:
+  response-envelope:
+    description: API response structure with success, data, error fields
+  response-types:
+    description: Typed response interfaces for route handlers
+  supabase-check:
+    description: Database configuration check at route level
+
+components:
+  loading-feedback:
+    description: Loading states with Loader2 and toast notification rules
+  props-interface:
+    description: Props naming convention and JSDoc requirements
+  status-styling:
+    description: Record-based status-to-style mapping pattern
+  styling:
+    description: cn() utility and Tailwind token usage for dark mode
+   
+   backend:
+  api:
+    description: Needs description - run /index-standards
+  migrations:
+    description: Needs description - run /index-standards
+  models:
+    description: Needs description - run /index-standards
+  queries:
+    description: Needs description - run /index-standards
+
+frontend:
+  accessibility:
+    description: Needs description - run /index-standards
+  components:
+    description: Needs description - run /index-standards
+  css:
+    description: Needs description - run /index-standards
+  responsive:
+    description: Needs description - run /index-standards
+
+global:
+  coding-style:
+    description: Needs description - run /index-standards
+  commenting:
+    description: Needs description - run /index-standards
+  conventions:
+    description: Needs description - run /index-standards
+  error-handling:
+    description: Needs description - run /index-standards
+  tech-stack:
+    description: Needs description - run /index-standards
+  validation:
+    description: Needs description - run /index-standards
+
+testing:
+  test-writing:
+    description: Needs description - run /index-standards
+
+types:
+  display-maps:
+    description: Record maps for display labels
+  union-const-pattern:
+    description: Union types paired with const arrays for iteration
+
