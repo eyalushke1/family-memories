@@ -10,4 +10,11 @@ export const MediaPaths = {
 
   videos: (clipId: string, filename: string) =>
     `videos/${clipId}/${filename}`,
+
+  // Intro clips (stored in separate folder)
+  introVideos: (introId: string, filename: string) =>
+    `intros/${introId}/${filename}`,
+
+  introThumbnails: (introId: string) =>
+    `intros/${introId}/thumbnail.webp`,
 }

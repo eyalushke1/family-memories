@@ -56,6 +56,7 @@ export interface Database {
           duration_seconds: number | null
           sort_order: number
           is_active: boolean
+          intro_clip_id: string | null
           created_at: string
           updated_at: string
         }
@@ -69,6 +70,7 @@ export interface Database {
           duration_seconds?: number | null
           sort_order?: number
           is_active?: boolean
+          intro_clip_id?: string | null
         }
         Update: {
           title?: string
@@ -79,6 +81,37 @@ export interface Database {
           animated_thumbnail_path?: string | null
           duration_seconds?: number | null
           sort_order?: number
+          is_active?: boolean
+          intro_clip_id?: string | null
+          updated_at?: string
+        }
+      }
+      intro_clips: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          video_path: string
+          thumbnail_path: string | null
+          duration_seconds: number | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          name: string
+          video_path: string
+          description?: string | null
+          thumbnail_path?: string | null
+          duration_seconds?: number | null
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          description?: string | null
+          video_path?: string
+          thumbnail_path?: string | null
+          duration_seconds?: number | null
           is_active?: boolean
           updated_at?: string
         }
@@ -97,6 +130,18 @@ export interface Database {
           content_type: string
           size_bytes: number
           original_filename?: string | null
+        }
+        Update: never
+      }
+      clip_profiles: {
+        Row: {
+          clip_id: string
+          profile_id: string
+          created_at: string
+        }
+        Insert: {
+          clip_id: string
+          profile_id: string
         }
         Update: never
       }
@@ -119,3 +164,10 @@ export type UpdateClip = Database['family_memories']['Tables']['clips']['Update'
 
 export type MediaItemRow = Database['family_memories']['Tables']['media_items']['Row']
 export type InsertMediaItem = Database['family_memories']['Tables']['media_items']['Insert']
+
+export type IntroClipRow = Database['family_memories']['Tables']['intro_clips']['Row']
+export type InsertIntroClip = Database['family_memories']['Tables']['intro_clips']['Insert']
+export type UpdateIntroClip = Database['family_memories']['Tables']['intro_clips']['Update']
+
+export type ClipProfileRow = Database['family_memories']['Tables']['clip_profiles']['Row']
+export type InsertClipProfile = Database['family_memories']['Tables']['clip_profiles']['Insert']

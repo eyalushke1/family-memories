@@ -1,4 +1,6 @@
 import type { StorageProvider } from './types'
+import { ZadaraStorageProvider } from './zadara-provider'
+import { LocalStorageProvider } from './local-provider'
 
 let instance: StorageProvider | null = null
 
@@ -8,14 +10,12 @@ export function getStorage(): StorageProvider {
   const storageType = process.env.STORAGE_TYPE ?? 'local'
 
   if (storageType === 'zadara') {
-    const { ZadaraStorageProvider } = require('./zadara-provider')
     instance = new ZadaraStorageProvider()
   } else {
-    const { LocalStorageProvider } = require('./local-provider')
     instance = new LocalStorageProvider()
   }
 
-  return instance!
+  return instance
 }
 
 /** Reset singleton — use only in tests */

@@ -1,3 +1,4 @@
+import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
@@ -25,9 +26,16 @@ function toProxyUrl(path: string | null): string | null {
   return `/api/media/files/${path}`
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const err = checkSupabase()
   if (err) return err
+
+  // Get profile ID from cookie
+  const profileId = request.cookies.get('fm-profile-id')?.value
+
+  if (!profileId) {
+    return errorResponse('Profile not selected', 401)
+  }
 
   // Fetch categories
   const { data: rawCategories, error: catError } = await supabase
@@ -46,6 +54,19 @@ export async function GET() {
     return successResponse([])
   }
 
+  // Fetch clip IDs that this profile can access
+  const { data: clipProfiles, error: cpError } = await supabase
+    .from('clip_profiles')
+    .select('clip_id')
+    .eq('profile_id', profileId)
+
+  if (cpError) {
+    console.error('Failed to fetch clip profiles:', cpError)
+    return errorResponse(`Failed to fetch clip profiles: ${cpError.message}`)
+  }
+
+  const allowedClipIds = new Set((clipProfiles ?? []).map((cp) => cp.clip_id))
+
   // Fetch all active clips
   const { data: rawClips, error: clipError } = await supabase
     .from('clips')
@@ -60,9 +81,12 @@ export async function GET() {
 
   const clips = rawClips as ClipRow[] | null
 
+  // Filter clips to only those allowed for this profile
+  const filteredClips = (clips ?? []).filter((clip) => allowedClipIds.has(clip.id))
+
   // Group clips by category
   const clipsByCategory = new Map<string, BrowseClip[]>()
-  for (const clip of clips ?? []) {
+  for (const clip of filteredClips) {
     const categoryClips = clipsByCategory.get(clip.category_id) ?? []
     categoryClips.push({
       id: clip.id,

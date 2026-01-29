@@ -1,7 +1,9 @@
 /**
  * Test Zadara NGOS connection
- * Usage: STORAGE_TYPE=zadara npx tsx scripts/test-zadara.ts
+ * Usage: npx tsx scripts/test-zadara.ts
  */
+import { config } from 'dotenv'
+config({ path: '.env.local' })
 
 async function testZadara() {
   // Force Zadara storage type
