@@ -53,6 +53,10 @@ const TRANSITION_EFFECTS = [
   { value: 'slide', label: 'Slide' },
   { value: 'zoom', label: 'Zoom' },
   { value: 'blur', label: 'Blur' },
+  { value: 'wipe', label: 'Wipe' },
+  { value: 'flip', label: 'Flip' },
+  { value: 'kenburns', label: 'Ken Burns' },
+  { value: 'dissolve', label: 'Dissolve' },
   { value: 'none', label: 'None' },
 ]
 

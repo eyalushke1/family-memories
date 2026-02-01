@@ -1,17 +1,21 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { X, Pause, Play, ChevronLeft, ChevronRight, Volume2, VolumeX } from 'lucide-react'
+import { X, Pause, Play, ChevronLeft, ChevronRight, Volume2, VolumeX, Cast } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { useRemotePlayback } from '@/hooks/use-remote-playback'
 
 interface Slide {
   id: string
-  imageUrl: string
+  mediaUrl: string
+  mediaType?: 'image' | 'video'
+  // Legacy support
+  imageUrl?: string
   caption?: string
   durationMs?: number
 }
 
-type TransitionType = 'fade' | 'slide' | 'zoom' | 'blur' | 'none' | 'random'
+type TransitionType = 'fade' | 'slide' | 'zoom' | 'blur' | 'wipe' | 'flip' | 'kenburns' | 'dissolve' | 'none' | 'random'
 
 interface PresentationData {
   id: string
@@ -28,7 +32,10 @@ interface SlideshowPlayerProps {
   presentationData: PresentationData
 }
 
-const TRANSITION_TYPES: Exclude<TransitionType, 'random' | 'none'>[] = ['fade', 'slide', 'zoom', 'blur']
+// All available transition effects (excluding random and none)
+const TRANSITION_TYPES: Exclude<TransitionType, 'random' | 'none'>[] = [
+  'fade', 'slide', 'zoom', 'blur', 'wipe', 'flip', 'kenburns', 'dissolve'
+]
 
 export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   const router = useRouter()
@@ -38,13 +45,15 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   const [showControls, setShowControls] = useState(true)
   const [isMuted, setIsMuted] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [preloadedImages, setPreloadedImages] = useState<Set<number>>(new Set([0]))
+  const [preloadedMedia, setPreloadedMedia] = useState<Set<number>>(new Set([0]))
 
   // Transition phases: 'entering' (fade in), 'visible' (fully shown), 'exiting' (fade out)
   const [slidePhase, setSlidePhase] = useState<'entering' | 'visible' | 'exiting'>('entering')
   const [currentTransition, setCurrentTransition] = useState<Exclude<TransitionType, 'random'>>('fade')
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const previousVideoRef = useRef<HTMLVideoElement | null>(null)
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const slideTimerRef = useRef<NodeJS.Timeout | null>(null)
   const controlsTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -57,18 +66,32 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     transitionType,
     transitionDurationMs,
     backgroundMusicUrl,
-    musicFadeOutMs = 3000
+    musicFadeOutMs = 3000,
+    muteVideoAudio = true
   } = presentationData
 
-  const currentSlide = slides[currentIndex]
-  const previousSlide = previousIndex !== null ? slides[previousIndex] : null
-  const totalSlides = slides.length
+  // Normalize slides to use mediaUrl (handle legacy imageUrl)
+  const normalizedSlides = useMemo(() =>
+    slides.map(slide => ({
+      ...slide,
+      mediaUrl: slide.mediaUrl || slide.imageUrl || '',
+      mediaType: slide.mediaType || 'image' as const
+    }))
+  , [slides])
+
+  const currentSlide = normalizedSlides[currentIndex]
+  const previousSlide = previousIndex !== null ? normalizedSlides[previousIndex] : null
+  const totalSlides = normalizedSlides.length
+  const isCurrentVideo = currentSlide?.mediaType === 'video'
+
+  // Remote playback for casting videos
+  const { state: castState, isAvailable: castAvailable, isSupported: castSupported, promptCast } = useRemotePlayback(videoRef)
 
   // Generate random transitions for each slide if using random mode
   const slideTransitions = useMemo(() => {
     if (transitionType !== 'random') return []
-    return slides.map(() => TRANSITION_TYPES[Math.floor(Math.random() * TRANSITION_TYPES.length)])
-  }, [slides, transitionType])
+    return normalizedSlides.map(() => TRANSITION_TYPES[Math.floor(Math.random() * TRANSITION_TYPES.length)])
+  }, [normalizedSlides, transitionType])
 
   // Get the transition to use for the current slide
   const getTransitionForSlide = useCallback((index: number): Exclude<TransitionType, 'random'> => {
@@ -81,43 +104,50 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     return transitionType as Exclude<TransitionType, 'random'>
   }, [transitionType, slideTransitions])
 
-  // Preload next images
+  // Preload next media
   useEffect(() => {
     const toPreload = [currentIndex, currentIndex + 1, currentIndex + 2]
-      .filter((i) => i < totalSlides && !preloadedImages.has(i))
+      .filter((i) => i < totalSlides && !preloadedMedia.has(i))
 
     if (toPreload.length > 0) {
       toPreload.forEach((i) => {
-        const img = new Image()
-        img.src = slides[i].imageUrl
+        const slide = normalizedSlides[i]
+        if (slide.mediaType === 'video') {
+          // Preload video by creating a video element
+          const video = document.createElement('video')
+          video.preload = 'metadata'
+          video.src = slide.mediaUrl
+        } else {
+          // Preload image
+          const img = new Image()
+          img.src = slide.mediaUrl
+        }
       })
-      setPreloadedImages((prev) => {
+      setPreloadedMedia((prev) => {
         const next = new Set(prev)
         toPreload.forEach((i) => next.add(i))
         return next
       })
     }
-  }, [currentIndex, slides, totalSlides, preloadedImages])
+  }, [currentIndex, normalizedSlides, totalSlides, preloadedMedia])
 
   // Music fade out when approaching end
   useEffect(() => {
     if (!audioRef.current || !isPlaying || isMuted) return
 
-    // Calculate total presentation duration
-    const totalDuration = slides.reduce((acc, slide) => acc + (slide.durationMs || slideDurationMs), 0)
-    const currentTime = slides.slice(0, currentIndex).reduce((acc, slide) => acc + (slide.durationMs || slideDurationMs), 0) +
+    const totalDuration = normalizedSlides.reduce((acc, slide) => acc + (slide.durationMs || slideDurationMs), 0)
+    const currentTime = normalizedSlides.slice(0, currentIndex).reduce((acc, slide) => acc + (slide.durationMs || slideDurationMs), 0) +
       (progress / 100) * (currentSlide?.durationMs || slideDurationMs)
 
     const timeRemaining = totalDuration - currentTime
 
-    // Start fade out when we're within musicFadeOutMs of the end
     if (timeRemaining <= musicFadeOutMs && currentIndex === totalSlides - 1) {
       const targetVolume = Math.max(0, (timeRemaining / musicFadeOutMs) * 0.5)
       audioRef.current.volume = targetVolume
     } else if (audioRef.current.volume < 0.5) {
       audioRef.current.volume = 0.5
     }
-  }, [currentIndex, progress, slides, slideDurationMs, currentSlide, musicFadeOutMs, totalSlides, isPlaying, isMuted])
+  }, [currentIndex, progress, normalizedSlides, slideDurationMs, currentSlide, musicFadeOutMs, totalSlides, isPlaying, isMuted])
 
   // Handle slide phase transitions
   const startSlidePhases = useCallback(() => {
@@ -125,23 +155,22 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     const enterDuration = transitionDurationMs
     const exitDuration = transitionDurationMs
 
-    // Clear any existing timers
     if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
     if (exitTimerRef.current) clearTimeout(exitTimerRef.current)
 
-    // Start in entering phase
     setSlidePhase('entering')
 
-    // After enter transition, switch to visible
     enterTimerRef.current = setTimeout(() => {
       setSlidePhase('visible')
     }, enterDuration)
 
-    // Before slide ends, start exiting phase
-    exitTimerRef.current = setTimeout(() => {
-      setSlidePhase('exiting')
-    }, duration - exitDuration)
-  }, [currentSlide, slideDurationMs, transitionDurationMs])
+    // Only set exit timer for images (videos handle their own timing)
+    if (!isCurrentVideo) {
+      exitTimerRef.current = setTimeout(() => {
+        setSlidePhase('exiting')
+      }, duration - exitDuration)
+    }
+  }, [currentSlide, slideDurationMs, transitionDurationMs, isCurrentVideo])
 
   // Auto-advance slides
   const goToNext = useCallback(() => {
@@ -151,7 +180,6 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       setCurrentIndex((prev) => prev + 1)
       setProgress(0)
     } else {
-      // End of presentation
       setIsPlaying(false)
     }
   }, [currentIndex, totalSlides, getTransitionForSlide])
@@ -174,6 +202,26 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     }
   }, [currentIndex, totalSlides, getTransitionForSlide])
 
+  // Handle video events
+  const handleVideoEnded = useCallback(() => {
+    setSlidePhase('exiting')
+    // Advance after exit transition
+    setTimeout(goToNext, transitionDurationMs)
+  }, [goToNext, transitionDurationMs])
+
+  const handleVideoTimeUpdate = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = e.currentTarget
+    if (video.duration) {
+      const percent = (video.currentTime / video.duration) * 100
+      setProgress(percent)
+
+      // Start exit transition before video ends
+      if (video.duration - video.currentTime <= transitionDurationMs / 1000 && slidePhase !== 'exiting') {
+        setSlidePhase('exiting')
+      }
+    }
+  }, [transitionDurationMs, slidePhase])
+
   // Handle slide timing and phases
   useEffect(() => {
     if (!isPlaying) {
@@ -193,16 +241,28 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
         clearTimeout(exitTimerRef.current)
         exitTimerRef.current = null
       }
+      // Pause video if playing
+      if (videoRef.current) {
+        videoRef.current.pause()
+      }
       return
     }
-
-    const duration = currentSlide?.durationMs || slideDurationMs
-    const updateInterval = 50
 
     // Start slide phases
     startSlidePhases()
 
-    // Progress bar update
+    // For videos, let the video control timing
+    if (isCurrentVideo) {
+      if (videoRef.current) {
+        videoRef.current.play().catch(() => {})
+      }
+      return
+    }
+
+    // For images, use timer-based progression
+    const duration = currentSlide?.durationMs || slideDurationMs
+    const updateInterval = 50
+
     progressIntervalRef.current = setInterval(() => {
       setProgress((prev) => {
         const next = prev + (updateInterval / duration) * 100
@@ -210,29 +270,19 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       })
     }, updateInterval)
 
-    // Slide advance
     slideTimerRef.current = setTimeout(goToNext, duration)
 
     return () => {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current)
-      }
-      if (slideTimerRef.current) {
-        clearTimeout(slideTimerRef.current)
-      }
-      if (enterTimerRef.current) {
-        clearTimeout(enterTimerRef.current)
-      }
-      if (exitTimerRef.current) {
-        clearTimeout(exitTimerRef.current)
-      }
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      if (slideTimerRef.current) clearTimeout(slideTimerRef.current)
+      if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
+      if (exitTimerRef.current) clearTimeout(exitTimerRef.current)
     }
-  }, [isPlaying, currentIndex, currentSlide, slideDurationMs, goToNext, startSlidePhases])
+  }, [isPlaying, currentIndex, currentSlide, slideDurationMs, goToNext, startSlidePhases, isCurrentVideo])
 
   // Reset progress when slide changes
   useEffect(() => {
     setProgress(0)
-    // Clear previous slide after transition completes
     const timer = setTimeout(() => {
       setPreviousIndex(null)
     }, transitionDurationMs)
@@ -250,9 +300,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     if (audioRef.current) {
       audioRef.current.muted = isMuted
       if (isPlaying) {
-        audioRef.current.play().catch(() => {
-          // Autoplay might be blocked
-        })
+        audioRef.current.play().catch(() => {})
       } else {
         audioRef.current.pause()
       }
@@ -335,42 +383,66 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
     if (transition === 'none') return {}
 
+    const isEntering = slidePhase === 'entering'
+    const isExiting = slidePhase === 'exiting'
+
     switch (transition) {
       case 'fade':
         return {
           ...base,
-          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
         }
       case 'zoom':
-        // Ken Burns-like effect: slight zoom during display
         return {
           ...base,
-          transform: slidePhase === 'entering'
-            ? 'scale(1.05)'
-            : slidePhase === 'exiting'
-            ? 'scale(0.95)'
-            : 'scale(1)',
-          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
+          transform: isEntering ? 'scale(1.05)' : isExiting ? 'scale(0.95)' : 'scale(1)',
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
         }
       case 'slide':
         return {
           ...base,
-          transform: slidePhase === 'entering'
-            ? 'translateX(50px)'
-            : slidePhase === 'exiting'
-            ? 'translateX(-50px)'
-            : 'translateX(0)',
-          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
+          transform: isEntering ? 'translateX(50px)' : isExiting ? 'translateX(-50px)' : 'translateX(0)',
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
         }
       case 'blur':
         return {
           ...base,
-          filter: slidePhase === 'entering'
-            ? 'blur(15px)'
-            : slidePhase === 'exiting'
-            ? 'blur(15px)'
-            : 'blur(0)',
-          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
+          filter: isEntering ? 'blur(15px)' : isExiting ? 'blur(15px)' : 'blur(0)',
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
+        }
+      case 'wipe':
+        return {
+          ...base,
+          clipPath: isEntering
+            ? 'inset(0 100% 0 0)'
+            : isExiting
+            ? 'inset(0 0 0 100%)'
+            : 'inset(0 0 0 0)',
+        }
+      case 'flip':
+        return {
+          ...base,
+          transform: isEntering
+            ? 'perspective(1000px) rotateY(-90deg)'
+            : isExiting
+            ? 'perspective(1000px) rotateY(90deg)'
+            : 'perspective(1000px) rotateY(0deg)',
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
+        }
+      case 'kenburns':
+        // Ken Burns: subtle slow zoom throughout display
+        return {
+          ...base,
+          transition: `all ${slideDurationMs}ms ease-in-out`,
+          transform: isEntering ? 'scale(1)' : isExiting ? 'scale(1.1)' : 'scale(1.05)',
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
+        }
+      case 'dissolve':
+        // Dissolve: combination of fade and slight blur
+        return {
+          ...base,
+          opacity: isEntering ? 0 : isExiting ? 0 : 1,
+          filter: isEntering ? 'brightness(1.5) saturate(0.5)' : isExiting ? 'brightness(1.5) saturate(0.5)' : 'brightness(1) saturate(1)',
         }
       default:
         return {}
@@ -386,31 +458,56 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
     switch (transition) {
       case 'fade':
-        return {
-          ...base,
-          opacity: 0,
-        }
+        return { ...base, opacity: 0 }
       case 'zoom':
-        return {
-          ...base,
-          transform: 'scale(0.9)',
-          opacity: 0,
-        }
+        return { ...base, transform: 'scale(0.9)', opacity: 0 }
       case 'slide':
-        return {
-          ...base,
-          transform: 'translateX(-100px)',
-          opacity: 0,
-        }
+        return { ...base, transform: 'translateX(-100px)', opacity: 0 }
       case 'blur':
-        return {
-          ...base,
-          filter: 'blur(20px)',
-          opacity: 0,
-        }
+        return { ...base, filter: 'blur(20px)', opacity: 0 }
+      case 'wipe':
+        return { ...base, clipPath: 'inset(0 0 0 100%)' }
+      case 'flip':
+        return { ...base, transform: 'perspective(1000px) rotateY(90deg)', opacity: 0 }
+      case 'kenburns':
+        return { ...base, transform: 'scale(1.1)', opacity: 0 }
+      case 'dissolve':
+        return { ...base, opacity: 0, filter: 'brightness(1.5) saturate(0.5)' }
       default:
         return { opacity: 0 }
     }
+  }
+
+  // Render media element (image or video)
+  const renderMedia = (slide: typeof currentSlide, isCurrent: boolean, style: React.CSSProperties) => {
+    if (!slide) return null
+
+    if (slide.mediaType === 'video') {
+      return (
+        <video
+          ref={isCurrent ? videoRef : previousVideoRef}
+          key={slide.id}
+          src={slide.mediaUrl}
+          className="max-w-full max-h-full object-contain"
+          style={style}
+          autoPlay={isCurrent && isPlaying}
+          muted={muteVideoAudio || isMuted}
+          playsInline
+          onEnded={isCurrent ? handleVideoEnded : undefined}
+          onTimeUpdate={isCurrent ? handleVideoTimeUpdate : undefined}
+        />
+      )
+    }
+
+    return (
+      <img
+        key={slide.id}
+        src={slide.mediaUrl}
+        alt=""
+        className="max-w-full max-h-full object-contain"
+        style={style}
+      />
+    )
   }
 
   return (
@@ -422,24 +519,13 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       {/* Previous slide (for crossfade during transition) */}
       {previousSlide && (
         <div className="absolute inset-0 flex items-center justify-center z-0">
-          <img
-            src={previousSlide.imageUrl}
-            alt=""
-            className="max-w-full max-h-full object-contain"
-            style={getPreviousSlideStyle(currentTransition)}
-          />
+          {renderMedia(previousSlide, false, getPreviousSlideStyle(currentTransition))}
         </div>
       )}
 
       {/* Current slide */}
       <div className="absolute inset-0 flex items-center justify-center z-10">
-        <img
-          key={currentSlide?.id}
-          src={currentSlide?.imageUrl}
-          alt=""
-          className="max-w-full max-h-full object-contain"
-          style={getCurrentSlideStyle(currentTransition)}
-        />
+        {renderMedia(currentSlide, true, getCurrentSlideStyle(currentTransition))}
       </div>
 
       {/* Caption */}
@@ -469,7 +555,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
       >
-        {slides.map((_, index) => (
+        {normalizedSlides.map((slide, index) => (
           <button
             key={index}
             onClick={(e) => {
@@ -478,7 +564,8 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
             }}
             className={`w-2 h-2 rounded-full transition-colors ${
               index === currentIndex ? 'bg-accent' : 'bg-white/50 hover:bg-white/70'
-            }`}
+            } ${slide.mediaType === 'video' ? 'ring-1 ring-white/30' : ''}`}
+            title={slide.mediaType === 'video' ? 'Video' : 'Image'}
           />
         ))}
       </div>
@@ -515,14 +602,32 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
             </button>
           </div>
 
-          {/* Center - slide count */}
-          <div className="text-sm text-white/70">
-            {currentIndex + 1} / {totalSlides}
+          {/* Center - slide count and type indicator */}
+          <div className="text-sm text-white/70 flex items-center gap-2">
+            <span>{currentIndex + 1} / {totalSlides}</span>
+            {isCurrentVideo && (
+              <span className="px-2 py-0.5 bg-white/20 rounded text-xs">Video</span>
+            )}
           </div>
 
           {/* Right controls */}
           <div className="flex items-center gap-4">
-            {backgroundMusicUrl && (
+            {/* Cast button - shows when casting is available and on video slide */}
+            {castSupported && castAvailable && isCurrentVideo && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  promptCast()
+                }}
+                className={`p-2 hover:bg-white/10 rounded-full transition-colors ${
+                  castState === 'connected' ? 'text-green-500' : ''
+                }`}
+                title={castState === 'connected' ? 'Connected to cast device' : 'Cast to TV'}
+              >
+                <Cast size={20} />
+              </button>
+            )}
+            {(backgroundMusicUrl || isCurrentVideo) && (
               <button
                 onClick={() => setIsMuted((m) => !m)}
                 className="p-2 hover:bg-white/10 rounded-full transition-colors"

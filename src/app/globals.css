@@ -37,6 +37,58 @@ body {
   border-radius: 0.375rem;
 }
 
+/* Enhanced TV focus styles - larger and more visible */
+@media (min-width: 1920px) {
+  .focus-ring:focus-visible {
+    outline-width: 4px;
+    outline-offset: 4px;
+  }
+}
+
+/* TV mode specific styles */
+.tv-focusable {
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.tv-focusable:focus {
+  outline: none;
+}
+
+.tv-focusable:focus-visible {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 4px var(--color-accent), 0 8px 32px rgba(229, 9, 20, 0.3);
+}
+
+/* Ensure touch targets are large enough for TV remotes (minimum 44px) */
+@media (min-width: 1920px) {
+  button, [role="button"], a {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* TV scroll containers - larger gaps and padding */
+@media (min-width: 1920px) {
+  .tv-scroll-container {
+    scroll-padding: 3rem;
+    scroll-behavior: smooth;
+  }
+}
+
+/* Focus visible animation for TV */
+@keyframes tv-focus-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 4px var(--color-accent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--color-accent), 0 0 20px rgba(229, 9, 20, 0.5);
+  }
+}
+
+.tv-focus-animated:focus-visible {
+  animation: tv-focus-pulse 1.5s ease-in-out infinite;
+}
+
 @theme inline {
   --color-bg-primary: #0a0a0a;
   --color-bg-secondary: #141414;

@@ -104,6 +104,47 @@ export async function PUT(
   }
 }
 
+// PATCH - Update a single slide (caption, duration, etc.)
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const err = checkSupabase()
+  if (err) return err
+
+  const { id } = await params
+  const body = await request.json()
+  const { slideId, caption, duration_ms } = body
+
+  if (!slideId) {
+    return errorResponse('slideId is required', 400)
+  }
+
+  // Build update object with only provided fields
+  const updates: { caption?: string | null; duration_ms?: number | null } = {}
+  if (caption !== undefined) updates.caption = caption
+  if (duration_ms !== undefined) updates.duration_ms = duration_ms
+
+  if (Object.keys(updates).length === 0) {
+    return errorResponse('No fields to update', 400)
+  }
+
+  const { data, error } = await supabase
+    .from('presentation_slides')
+    .update(updates)
+    .eq('id', slideId)
+    .eq('presentation_id', id)
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Failed to update slide:', error)
+    return errorResponse(`Failed to update slide: ${error.message}`)
+  }
+
+  return successResponse(data)
+}
+
 // DELETE - Delete a slide
 export async function DELETE(
   request: NextRequest,

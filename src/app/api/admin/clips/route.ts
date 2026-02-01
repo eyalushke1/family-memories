@@ -29,7 +29,15 @@ export async function GET(request: NextRequest) {
     return errorResponse(`Failed to fetch clips: ${error.message}`)
   }
 
-  return successResponse(data)
+  // Transform presentation array to single object (Supabase returns one-to-many as array)
+  const transformedData = data?.map((clip) => ({
+    ...clip,
+    presentation: Array.isArray(clip.presentation) && clip.presentation.length > 0
+      ? clip.presentation[0]
+      : null
+  }))
+
+  return successResponse(transformedData)
 }
 
 export async function POST(request: NextRequest) {

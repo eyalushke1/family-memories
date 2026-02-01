@@ -18,6 +18,8 @@ import {
   Clock,
   Trash2,
   Save,
+  Type,
+  MessageSquare,
 } from 'lucide-react'
 import type { PresentationRow, PresentationSlideRow } from '@/types/database'
 
@@ -56,6 +58,10 @@ const TRANSITION_EFFECTS = [
   { value: 'slide', label: 'Slide' },
   { value: 'zoom', label: 'Zoom' },
   { value: 'blur', label: 'Blur' },
+  { value: 'wipe', label: 'Wipe' },
+  { value: 'flip', label: 'Flip' },
+  { value: 'kenburns', label: 'Ken Burns' },
+  { value: 'dissolve', label: 'Dissolve' },
   { value: 'none', label: 'None' },
 ]
 
@@ -88,6 +94,11 @@ export function PresentationEditDialog({
   // Drag state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+
+  // Caption editing state
+  const [selectedSlideId, setSelectedSlideId] = useState<string | null>(null)
+  const [editingCaption, setEditingCaption] = useState('')
+  const [savingCaption, setSavingCaption] = useState(false)
 
   const musicInputRef = useRef<HTMLInputElement>(null)
 
@@ -220,6 +231,44 @@ export function PresentationEditDialog({
     setDraggedIndex(null)
   }
 
+  // Caption editing handlers
+  const handleSelectSlide = (slideId: string) => {
+    const slide = slides.find((s) => s.id === slideId)
+    setSelectedSlideId(slideId)
+    setEditingCaption(slide?.caption || '')
+  }
+
+  const handleSaveCaption = async () => {
+    if (!selectedSlideId || !presentationId) return
+
+    setSavingCaption(true)
+    try {
+      const res = await fetch(`/api/admin/presentations/${presentationId}/slides`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slideId: selectedSlideId,
+          caption: editingCaption || null,
+        }),
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        // Update local state
+        setSlides(slides.map((s) =>
+          s.id === selectedSlideId ? { ...s, caption: editingCaption || null } : s
+        ))
+        setHasChanges(true)
+      } else {
+        setError(data.error || 'Failed to save caption')
+      }
+    } catch (err) {
+      setError('Failed to save caption')
+    } finally {
+      setSavingCaption(false)
+    }
+  }
+
   const handleDeleteSlide = async (slideId: string) => {
     if (slides.length <= 1) {
       setError('Cannot delete the last slide')
@@ -349,7 +398,7 @@ export function PresentationEditDialog({
           <div className="p-5 border-b border-white/10">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-medium text-white/80">Slides Order</span>
-              <span className="text-xs text-white/40">Drag to reorder</span>
+              <span className="text-xs text-white/40">Drag to reorder, click to edit caption</span>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-2">
               {slides.map((slide, index) => (
@@ -359,9 +408,10 @@ export function PresentationEditDialog({
                   onDragStart={() => handleDragStart(index)}
                   onDragOver={(e) => handleDragOver(e, index)}
                   onDragEnd={handleDragEnd}
+                  onClick={() => handleSelectSlide(slide.id)}
                   className={`relative shrink-0 cursor-grab active:cursor-grabbing group ${
                     draggedIndex === index ? 'opacity-50' : ''
-                  }`}
+                  } ${selectedSlideId === slide.id ? 'ring-2 ring-accent' : ''}`}
                 >
                   <div className="absolute -top-1 -left-1 w-5 h-5 bg-accent text-white text-[10px] font-bold rounded-full flex items-center justify-center z-10">
                     {index + 1}
@@ -369,8 +419,16 @@ export function PresentationEditDialog({
                   <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
                     <GripVertical size={14} className="text-white drop-shadow-lg" />
                   </div>
+                  {slide.caption && (
+                    <div className="absolute bottom-1 left-1 z-10">
+                      <MessageSquare size={12} className="text-white drop-shadow-lg" />
+                    </div>
+                  )}
                   <button
-                    onClick={() => handleDeleteSlide(slide.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteSlide(slide.id)
+                    }}
                     className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 p-1 bg-red-500/80 hover:bg-red-500 rounded"
                   >
                     <Trash2 size={12} className="text-white" />
@@ -383,6 +441,50 @@ export function PresentationEditDialog({
                 </div>
               ))}
             </div>
+
+            {/* Caption Editor */}
+            {selectedSlideId && (
+              <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10">
+                <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-2">
+                  <Type size={14} />
+                  Slide Caption
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={editingCaption}
+                    onChange={(e) => setEditingCaption(e.target.value)}
+                    placeholder="Enter caption for this slide..."
+                    className="flex-1 px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveCaption()
+                      if (e.key === 'Escape') setSelectedSlideId(null)
+                    }}
+                  />
+                  <button
+                    onClick={handleSaveCaption}
+                    disabled={savingCaption}
+                    className="px-4 py-2.5 bg-accent hover:bg-accent/80 text-white rounded-xl font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {savingCaption ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Save size={16} />
+                    )}
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setSelectedSlideId(null)}
+                    className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <p className="text-xs text-white/40 mt-2">
+                  Caption will be displayed over the slide during playback
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Settings */}

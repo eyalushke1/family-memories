@@ -204,15 +204,17 @@ export async function POST(request: NextRequest) {
 
       presentationId = presentation.id
 
-      // Create slides (only images, not videos)
-      const slides = importedItems
-        .filter((item) => !item.filename.toLowerCase().match(/\.(mp4|mov|avi|webm)$/))
-        .map((item, index) => ({
+      // Create slides (images and videos)
+      const slides = importedItems.map((item, index) => {
+        const isVideo = item.filename.toLowerCase().match(/\.(mp4|mov|avi|webm|mkv)$/)
+        return {
           presentation_id: presentationId!,
           image_path: item.storagePath,
+          media_type: isVideo ? 'video' : 'image',
           sort_order: index,
           google_photos_id: item.googleMediaId,
-        }))
+        }
+      })
 
       if (slides.length > 0) {
         const { error: slidesError } = await supabase

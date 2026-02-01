@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, SkipForward } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
+import { CastButton } from '@/components/cast/cast-button'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -13,12 +14,15 @@ type PlayState = 'loading' | 'intro' | 'transitioning' | 'main' | 'presentation'
 interface PresentationData {
   id: string
   slideDurationMs: number
-  transitionType: 'fade' | 'slide' | 'zoom' | 'none'
+  transitionType: 'fade' | 'slide' | 'zoom' | 'blur' | 'wipe' | 'flip' | 'kenburns' | 'dissolve' | 'none' | 'random'
   transitionDurationMs: number
   backgroundMusicUrl?: string | null
+  musicFadeOutMs?: number
+  muteVideoAudio?: boolean
   slides: {
     id: string
-    imageUrl: string
+    mediaUrl: string
+    mediaType?: 'image' | 'video'
     caption?: string
     durationMs?: number
   }[]
@@ -239,6 +243,23 @@ export default function WatchPage() {
             <ArrowLeft className="h-5 w-5" />
             <span className="text-sm">Back</span>
           </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Cast button */}
+      <AnimatePresence>
+        {showControls && mainVideoRef.current && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute right-4 top-4 z-20"
+          >
+            <CastButton
+              videoRef={mainVideoRef}
+              className="bg-black/50 hover:bg-black/70 text-white"
+            />
+          </motion.div>
         )}
       </AnimatePresence>
 

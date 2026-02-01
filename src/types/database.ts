@@ -206,6 +206,7 @@ export interface Database {
           id: string
           presentation_id: string
           image_path: string
+          media_type: 'image' | 'video'
           sort_order: number
           caption: string | null
           duration_ms: number | null
@@ -215,6 +216,7 @@ export interface Database {
         Insert: {
           presentation_id: string
           image_path: string
+          media_type?: 'image' | 'video'
           sort_order?: number
           caption?: string | null
           duration_ms?: number | null
@@ -222,6 +224,7 @@ export interface Database {
         }
         Update: {
           image_path?: string
+          media_type?: 'image' | 'video'
           sort_order?: number
           caption?: string | null
           duration_ms?: number | null

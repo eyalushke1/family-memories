@@ -36,10 +36,22 @@ export async function GET(
     return errorResponse(`Failed to fetch slides: ${slidesError.message}`)
   }
 
-  // Transform slides to include proxy URLs
+  // Helper to detect media type from path if not stored
+  const getMediaType = (slide: typeof slides[0]): 'image' | 'video' => {
+    if ((slide as { media_type?: string }).media_type) {
+      return (slide as { media_type: string }).media_type as 'image' | 'video'
+    }
+    // Fallback: detect from file extension
+    const path = slide.image_path.toLowerCase()
+    if (path.match(/\.(mp4|mov|avi|webm|mkv)$/)) return 'video'
+    return 'image'
+  }
+
+  // Transform slides to include proxy URLs and media type
   const slidesWithUrls = slides.map((slide) => ({
     id: slide.id,
-    imageUrl: `/api/media/files/${slide.image_path}`,
+    mediaUrl: `/api/media/files/${slide.image_path}`,
+    mediaType: getMediaType(slide),
     caption: slide.caption,
     durationMs: slide.duration_ms,
     sortOrder: slide.sort_order,
