@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "dev": "next dev",
+    "dev:restart": "lsof -ti:3000 | xargs kill -9 2>/dev/null; next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -37,7 +38,9 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.29.2",
+    "googleapis": "^170.1.0",
     "lucide-react": "^0.563.0",
+    "music-metadata": "^11.11.1",
     "next": "^16.1.6",
     "postcss": "^8.5.6",
     "react": "^19.2.4",
@@ -45,9 +48,11 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
+    "uuid": "^13.0.0",
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@types/uuid": "^10.0.0",
     "dotenv": "^17.2.3",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.1.6",

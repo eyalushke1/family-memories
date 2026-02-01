@@ -7,7 +7,8 @@ import { SortableItem } from '@/components/admin/shared/sortable-item'
 import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { ConfirmDialog } from '@/components/admin/shared/confirm-dialog'
 import { MediaImage } from '@/components/shared/media-image'
-import { Pencil, Trash2, Clock } from 'lucide-react'
+import { PresentationEditDialog } from '@/components/admin/presentations/presentation-edit-dialog'
+import { Pencil, Trash2, Clock, Presentation } from 'lucide-react'
 import type { ClipRow, CategoryRow } from '@/types/database'
 
 interface ClipListProps {
@@ -30,9 +31,26 @@ export function ClipList({
   selectedCategory,
   onEdit,
 }: ClipListProps) {
-  const { reorderClips, updateClip, removeClip } = useAdminStore()
+  const { reorderClips, updateClip, removeClip, setClips } = useAdminStore()
   const [deleteTarget, setDeleteTarget] = useState<ClipRow | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [editingPresentationId, setEditingPresentationId] = useState<string | null>(null)
+
+  const handleEditPresentation = (clip: ClipRow) => {
+    if (clip.presentation?.id) {
+      setEditingPresentationId(clip.presentation.id)
+    }
+  }
+
+  const handlePresentationSaved = async () => {
+    setEditingPresentationId(null)
+    // Refresh clips to get updated data
+    const res = await fetch('/api/admin/clips')
+    const data = await res.json()
+    if (data.success) {
+      setClips(data.data)
+    }
+  }
 
   const handleReorder = async (reordered: ClipRow[]) => {
     if (!selectedCategory) return
@@ -122,6 +140,7 @@ export function ClipList({
                   onEdit={onEdit}
                   onDelete={setDeleteTarget}
                   onToggleActive={handleToggleActive}
+                  onEditPresentation={handleEditPresentation}
                 />
               ))}
             </div>
@@ -137,6 +156,13 @@ export function ClipList({
           variant="danger"
           loading={deleting}
         />
+        {editingPresentationId && (
+          <PresentationEditDialog
+            presentationId={editingPresentationId}
+            onClose={() => setEditingPresentationId(null)}
+            onSave={handlePresentationSaved}
+          />
+        )}
       </>
     )
   }
@@ -176,6 +202,15 @@ export function ClipList({
                   />
 
                   <div className="flex items-center gap-2">
+                    {clip.presentation?.id && (
+                      <button
+                        onClick={() => handleEditPresentation(clip)}
+                        className="p-2 hover:bg-accent/20 rounded-lg transition-colors"
+                        title="Edit Presentation"
+                      >
+                        <Presentation size={18} className="text-accent" />
+                      </button>
+                    )}
                     <button
                       onClick={() => onEdit(clip)}
                       className="p-2 hover:bg-bg-card-hover rounded-lg transition-colors"
@@ -208,6 +243,14 @@ export function ClipList({
         variant="danger"
         loading={deleting}
       />
+
+      {editingPresentationId && (
+        <PresentationEditDialog
+          presentationId={editingPresentationId}
+          onClose={() => setEditingPresentationId(null)}
+          onSave={handlePresentationSaved}
+        />
+      )}
     </>
   )
 }
@@ -217,9 +260,12 @@ interface ClipCardProps {
   onEdit: (clip: ClipRow) => void
   onDelete: (clip: ClipRow) => void
   onToggleActive: (clip: ClipRow) => void
+  onEditPresentation: (clip: ClipRow) => void
 }
 
-function ClipCard({ clip, onEdit, onDelete, onToggleActive }: ClipCardProps) {
+function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation }: ClipCardProps) {
+  const hasPresentation = !!clip.presentation?.id
+
   return (
     <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
       <div className="aspect-video relative">
@@ -235,6 +281,12 @@ function ClipCard({ clip, onEdit, onDelete, onToggleActive }: ClipCardProps) {
         {clip.duration_seconds && (
           <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-xs">
             {formatDuration(clip.duration_seconds)}
+          </div>
+        )}
+        {hasPresentation && (
+          <div className="absolute top-2 left-2 px-2 py-1 bg-accent/90 rounded text-xs flex items-center gap-1">
+            <Presentation size={12} />
+            Slideshow
           </div>
         )}
         {!clip.is_active && (
@@ -259,6 +311,15 @@ function ClipCard({ clip, onEdit, onDelete, onToggleActive }: ClipCardProps) {
           />
 
           <div className="flex items-center gap-2">
+            {hasPresentation && (
+              <button
+                onClick={() => onEditPresentation(clip)}
+                className="p-2 hover:bg-accent/20 rounded-lg transition-colors"
+                title="Edit Presentation"
+              >
+                <Presentation size={18} className="text-accent" />
+              </button>
+            )}
             <button
               onClick={() => onEdit(clip)}
               className="p-2 hover:bg-bg-card-hover rounded-lg transition-colors"

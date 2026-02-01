@@ -1,14 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useAdminStore } from '@/stores/admin-store'
 import { ClipList } from '@/components/admin/clips/clip-list'
 import { ClipForm } from '@/components/admin/clips/clip-form'
 import { Select } from '@/components/admin/shared/form-field'
-import { Plus } from 'lucide-react'
+import { Plus, Loader2 } from 'lucide-react'
 import type { ClipRow, IntroClipRow, ProfileRow } from '@/types/database'
 
-export default function ClipsAdminPage() {
+function ClipsContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const editClipId = searchParams.get('edit')
+
   const {
     clips,
     setClips,
@@ -62,6 +67,19 @@ export default function ClipsAdminPage() {
 
     fetchData()
   }, [setClips, setCategories, setLoadingClips])
+
+  // Handle edit query param - open the form when clip data is loaded
+  useEffect(() => {
+    if (editClipId && clips.length > 0 && !showForm) {
+      const clipToEdit = clips.find((c) => c.id === editClipId)
+      if (clipToEdit) {
+        setEditingClip(clipToEdit)
+        setShowForm(true)
+        // Clear the URL param to prevent reopening on refresh
+        router.replace('/admin/clips', { scroll: false })
+      }
+    }
+  }, [editClipId, clips, showForm, router])
 
   const handleEdit = (clip: ClipRow) => {
     setEditingClip(clip)
@@ -133,5 +151,17 @@ export default function ClipsAdminPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function ClipsAdminPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="animate-spin text-accent" size={32} />
+      </div>
+    }>
+      <ClipsContent />
+    </Suspense>
   )
 }

@@ -12,7 +12,10 @@ export async function GET(request: NextRequest) {
 
   let query = supabase
     .from('clips')
-    .select('*')
+    .select(`
+      *,
+      presentation:presentations(id)
+    `)
     .order('sort_order', { ascending: true })
 
   if (categoryId) {

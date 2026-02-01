@@ -7,13 +7,15 @@ interface FormFieldProps {
   error?: string
   children: React.ReactNode
   className?: string
+  required?: boolean
 }
 
-export function FormField({ label, error, children, className }: FormFieldProps) {
+export function FormField({ label, error, children, className, required }: FormFieldProps) {
   return (
     <div className={cn('space-y-2', className)}>
       <label className="block text-sm font-medium text-text-secondary">
         {label}
+        {required && <span className="text-red-400 ml-1">*</span>}
       </label>
       {children}
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -71,5 +73,28 @@ export function Select({ className, error, children, ...props }: SelectProps) {
     >
       {children}
     </select>
+  )
+}
+
+interface CheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label: string
+  description?: string
+}
+
+export function Checkbox({ label, description, className, ...props }: CheckboxProps) {
+  return (
+    <label className={cn('flex items-start gap-3 cursor-pointer', className)}>
+      <input
+        type="checkbox"
+        className="mt-1 w-4 h-4 rounded border-border bg-bg-primary text-accent focus:ring-2 focus:ring-accent focus:ring-offset-0 cursor-pointer"
+        {...props}
+      />
+      <div>
+        <span className="text-sm font-medium text-text-primary">{label}</span>
+        {description && (
+          <p className="text-xs text-text-secondary mt-0.5">{description}</p>
+        )}
+      </div>
+    </label>
   )
 }

@@ -17,4 +17,16 @@ export const MediaPaths = {
 
   introThumbnails: (introId: string) =>
     `intros/${introId}/thumbnail.webp`,
+
+  // Presentation slides
+  presentationSlides: (presentationId: string, slideId: string, extension: string) =>
+    `presentations/${presentationId}/slides/${slideId}.${extension}`,
+
+  // Background music for presentations
+  presentationMusic: (presentationId: string, filename: string) =>
+    `presentations/${presentationId}/music/${filename}`,
+
+  // Google Photos imports (organized by date for easy browsing)
+  googlePhotosImport: (year: string, month: string, filename: string) =>
+    `google-photos/${year}/${month}/${filename}`,
 }

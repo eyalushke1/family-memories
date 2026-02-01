@@ -4,10 +4,25 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, SkipForward } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
-type PlayState = 'loading' | 'intro' | 'transitioning' | 'main' | 'error'
+type PlayState = 'loading' | 'intro' | 'transitioning' | 'main' | 'presentation' | 'error'
+
+interface PresentationData {
+  id: string
+  slideDurationMs: number
+  transitionType: 'fade' | 'slide' | 'zoom' | 'none'
+  transitionDurationMs: number
+  backgroundMusicUrl?: string | null
+  slides: {
+    id: string
+    imageUrl: string
+    caption?: string
+    durationMs?: number
+  }[]
+}
 
 export default function WatchPage() {
   const router = useRouter()
@@ -15,6 +30,7 @@ export default function WatchPage() {
   const clipId = params.clipId as string
   const [clip, setClip] = useState<ClipRow | null>(null)
   const [introClip, setIntroClip] = useState<IntroClipRow | null>(null)
+  const [presentationData, setPresentationData] = useState<PresentationData | null>(null)
   const [playState, setPlayState] = useState<PlayState>('loading')
   const [showControls, setShowControls] = useState(true)
   const [mainVideoReady, setMainVideoReady] = useState(false)
@@ -35,6 +51,32 @@ export default function WatchPage() {
             return
           }
           setClip(found)
+
+          // Check if this is a presentation clip
+          if (found.video_path === 'presentation') {
+            // Fetch presentation data
+            const presRes = await fetch(`/api/presentations/${clipId}`)
+            const presJson: ApiResponse<PresentationData> = await presRes.json()
+            if (presJson.success && presJson.data) {
+              setPresentationData(presJson.data)
+              // Check for intro clip
+              if (found.intro_clip_id) {
+                const introRes = await fetch(`/api/intros/${found.intro_clip_id}`)
+                const introJson: ApiResponse<IntroClipRow> = await introRes.json()
+                if (introJson.success && introJson.data) {
+                  setIntroClip(introJson.data)
+                  setPlayState('intro')
+                } else {
+                  setPlayState('presentation')
+                }
+              } else {
+                setPlayState('presentation')
+              }
+            } else {
+              setPlayState('error')
+            }
+            return
+          }
 
           if (found.intro_clip_id) {
             const introRes = await fetch(`/api/intros/${found.intro_clip_id}`)
@@ -78,6 +120,14 @@ export default function WatchPage() {
       introVideoRef.current.pause()
     }
 
+    // If this is a presentation, transition to presentation state
+    if (presentationData) {
+      setTimeout(() => {
+        setPlayState('presentation')
+      }, 300)
+      return
+    }
+
     // Start main video immediately
     if (mainVideoRef.current) {
       mainVideoRef.current.currentTime = 0
@@ -88,7 +138,7 @@ export default function WatchPage() {
     setTimeout(() => {
       setPlayState('main')
     }, 300)
-  }, [playState])
+  }, [playState, presentationData])
 
   const handleIntroEnded = () => {
     transitionToMain()
@@ -156,8 +206,13 @@ export default function WatchPage() {
     )
   }
 
+  // Render slideshow player for presentations
+  if (playState === 'presentation' && presentationData) {
+    return <SlideshowPlayer presentationData={presentationData} />
+  }
+
   const introVideoUrl = introClip ? `/api/media/files/${introClip.video_path}` : null
-  const mainVideoUrl = `/api/media/files/${clip.video_path}`
+  const mainVideoUrl = clip.video_path !== 'presentation' ? `/api/media/files/${clip.video_path}` : null
   const isPlayingIntro = playState === 'intro'
   const isTransitioning = playState === 'transitioning'
   const showIntroVideo = isPlayingIntro || isTransitioning
@@ -223,19 +278,21 @@ export default function WatchPage() {
         )}
 
         {/* Main video layer - preloaded during intro */}
-        <video
-          ref={mainVideoRef}
-          src={mainVideoUrl}
-          controls={showMainVideo}
-          playsInline
-          onCanPlayThrough={handleMainVideoReady}
-          className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
-          style={{
-            opacity: showMainVideo ? 1 : 0,
-            zIndex: showMainVideo ? 10 : 5,
-            pointerEvents: showMainVideo ? 'auto' : 'none',
-          }}
-        />
+        {mainVideoUrl && (
+          <video
+            ref={mainVideoRef}
+            src={mainVideoUrl}
+            controls={showMainVideo}
+            playsInline
+            onCanPlayThrough={handleMainVideoReady}
+            className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
+            style={{
+              opacity: showMainVideo ? 1 : 0,
+              zIndex: showMainVideo ? 10 : 5,
+              pointerEvents: showMainVideo ? 'auto' : 'none',
+            }}
+          />
+        )}
       </div>
 
       {/* Intro indicator badge */}

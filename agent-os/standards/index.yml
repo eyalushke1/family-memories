@@ -22,6 +22,20 @@ api:
   supabase-check:
     description: Database configuration check at route level
 
+google-photos:
+  baseurl-expiration:
+    description: "~60min URL expiry, download suffixes, never cache URLs"
+  download-retry:
+    description: "Exponential backoff, concurrency control, rate limit tuning"
+  factory-client:
+    description: "Profile-scoped API client factory with encapsulated auth"
+  http-207-partial-success:
+    description: "Multi-status for batch imports with partial failures"
+  oauth-token-refresh:
+    description: "5-min buffer auto-refresh, secure storage, failure handling"
+  pagination:
+    description: "pageToken/nextPageToken pattern, page sizes, batch limits"
+    
 components:
   loading-feedback:
     description: Loading states with Loader2 and toast notification rules
