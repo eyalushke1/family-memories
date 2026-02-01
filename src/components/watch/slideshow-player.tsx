@@ -39,14 +39,17 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   const [isMuted, setIsMuted] = useState(false)
   const [progress, setProgress] = useState(0)
   const [preloadedImages, setPreloadedImages] = useState<Set<number>>(new Set([0]))
-  const [isTransitioning, setIsTransitioning] = useState(false)
+
+  // Transition phases: 'entering' (fade in), 'visible' (fully shown), 'exiting' (fade out)
+  const [slidePhase, setSlidePhase] = useState<'entering' | 'visible' | 'exiting'>('entering')
   const [currentTransition, setCurrentTransition] = useState<Exclude<TransitionType, 'random'>>('fade')
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const slideTimerRef = useRef<NodeJS.Timeout | null>(null)
   const controlsTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const fadeIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const enterTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const exitTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   const {
     slides,
@@ -116,57 +119,62 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     }
   }, [currentIndex, progress, slides, slideDurationMs, currentSlide, musicFadeOutMs, totalSlides, isPlaying, isMuted])
 
+  // Handle slide phase transitions
+  const startSlidePhases = useCallback(() => {
+    const duration = currentSlide?.durationMs || slideDurationMs
+    const enterDuration = transitionDurationMs
+    const exitDuration = transitionDurationMs
+
+    // Clear any existing timers
+    if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
+    if (exitTimerRef.current) clearTimeout(exitTimerRef.current)
+
+    // Start in entering phase
+    setSlidePhase('entering')
+
+    // After enter transition, switch to visible
+    enterTimerRef.current = setTimeout(() => {
+      setSlidePhase('visible')
+    }, enterDuration)
+
+    // Before slide ends, start exiting phase
+    exitTimerRef.current = setTimeout(() => {
+      setSlidePhase('exiting')
+    }, duration - exitDuration)
+  }, [currentSlide, slideDurationMs, transitionDurationMs])
+
   // Auto-advance slides
   const goToNext = useCallback(() => {
     if (currentIndex < totalSlides - 1) {
       setPreviousIndex(currentIndex)
-      setIsTransitioning(true)
       setCurrentTransition(getTransitionForSlide(currentIndex + 1))
       setCurrentIndex((prev) => prev + 1)
       setProgress(0)
-
-      // End transition after duration
-      setTimeout(() => {
-        setIsTransitioning(false)
-        setPreviousIndex(null)
-      }, transitionDurationMs)
     } else {
       // End of presentation
       setIsPlaying(false)
     }
-  }, [currentIndex, totalSlides, transitionDurationMs, getTransitionForSlide])
+  }, [currentIndex, totalSlides, getTransitionForSlide])
 
   const goToPrevious = useCallback(() => {
     if (currentIndex > 0) {
       setPreviousIndex(currentIndex)
-      setIsTransitioning(true)
       setCurrentTransition(getTransitionForSlide(currentIndex - 1))
       setCurrentIndex((prev) => prev - 1)
       setProgress(0)
-
-      setTimeout(() => {
-        setIsTransitioning(false)
-        setPreviousIndex(null)
-      }, transitionDurationMs)
     }
-  }, [currentIndex, transitionDurationMs, getTransitionForSlide])
+  }, [currentIndex, getTransitionForSlide])
 
   const goToSlide = useCallback((index: number) => {
     if (index !== currentIndex && index >= 0 && index < totalSlides) {
       setPreviousIndex(currentIndex)
-      setIsTransitioning(true)
       setCurrentTransition(getTransitionForSlide(index))
       setCurrentIndex(index)
       setProgress(0)
-
-      setTimeout(() => {
-        setIsTransitioning(false)
-        setPreviousIndex(null)
-      }, transitionDurationMs)
     }
-  }, [currentIndex, totalSlides, transitionDurationMs, getTransitionForSlide])
+  }, [currentIndex, totalSlides, getTransitionForSlide])
 
-  // Handle slide timing
+  // Handle slide timing and phases
   useEffect(() => {
     if (!isPlaying) {
       if (progressIntervalRef.current) {
@@ -177,11 +185,22 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
         clearTimeout(slideTimerRef.current)
         slideTimerRef.current = null
       }
+      if (enterTimerRef.current) {
+        clearTimeout(enterTimerRef.current)
+        enterTimerRef.current = null
+      }
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current)
+        exitTimerRef.current = null
+      }
       return
     }
 
     const duration = currentSlide?.durationMs || slideDurationMs
     const updateInterval = 50
+
+    // Start slide phases
+    startSlidePhases()
 
     // Progress bar update
     progressIntervalRef.current = setInterval(() => {
@@ -201,19 +220,30 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       if (slideTimerRef.current) {
         clearTimeout(slideTimerRef.current)
       }
+      if (enterTimerRef.current) {
+        clearTimeout(enterTimerRef.current)
+      }
+      if (exitTimerRef.current) {
+        clearTimeout(exitTimerRef.current)
+      }
     }
-  }, [isPlaying, currentIndex, currentSlide, slideDurationMs, goToNext])
+  }, [isPlaying, currentIndex, currentSlide, slideDurationMs, goToNext, startSlidePhases])
 
   // Reset progress when slide changes
   useEffect(() => {
     setProgress(0)
-  }, [currentIndex])
+    // Clear previous slide after transition completes
+    const timer = setTimeout(() => {
+      setPreviousIndex(null)
+    }, transitionDurationMs)
+    return () => clearTimeout(timer)
+  }, [currentIndex, transitionDurationMs])
 
   // Background music
   useEffect(() => {
     if (backgroundMusicUrl && !audioRef.current) {
       audioRef.current = new Audio(backgroundMusicUrl)
-      audioRef.current.loop = false // Don't loop - we'll handle fade out
+      audioRef.current.loop = false
       audioRef.current.volume = 0.5
     }
 
@@ -298,71 +328,88 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     showControlsTemporarily()
   }
 
-  // Get transition styles for entering slide
-  const getEnterStyle = (transition: Exclude<TransitionType, 'random'>) => {
+  // Get transition styles for current slide based on phase
+  const getCurrentSlideStyle = (transition: Exclude<TransitionType, 'random'>) => {
     const duration = transitionDurationMs
     const base = { transition: `all ${duration}ms ease-in-out` }
+
+    if (transition === 'none') return {}
 
     switch (transition) {
       case 'fade':
         return {
           ...base,
-          opacity: isTransitioning ? 0 : 1,
+          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
         }
       case 'zoom':
+        // Ken Burns-like effect: slight zoom during display
         return {
           ...base,
-          transform: isTransitioning ? 'scale(1.1)' : 'scale(1)',
-          opacity: isTransitioning ? 0 : 1,
+          transform: slidePhase === 'entering'
+            ? 'scale(1.05)'
+            : slidePhase === 'exiting'
+            ? 'scale(0.95)'
+            : 'scale(1)',
+          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
         }
       case 'slide':
         return {
           ...base,
-          transform: isTransitioning ? 'translateX(100%)' : 'translateX(0)',
+          transform: slidePhase === 'entering'
+            ? 'translateX(50px)'
+            : slidePhase === 'exiting'
+            ? 'translateX(-50px)'
+            : 'translateX(0)',
+          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
         }
       case 'blur':
         return {
           ...base,
-          filter: isTransitioning ? 'blur(20px)' : 'blur(0)',
-          opacity: isTransitioning ? 0 : 1,
+          filter: slidePhase === 'entering'
+            ? 'blur(15px)'
+            : slidePhase === 'exiting'
+            ? 'blur(15px)'
+            : 'blur(0)',
+          opacity: slidePhase === 'entering' ? 0 : slidePhase === 'exiting' ? 0 : 1,
         }
-      case 'none':
       default:
         return {}
     }
   }
 
-  // Get transition styles for exiting slide
-  const getExitStyle = (transition: Exclude<TransitionType, 'random'>) => {
+  // Get transition styles for exiting slide (previous slide during crossfade)
+  const getPreviousSlideStyle = (transition: Exclude<TransitionType, 'random'>) => {
     const duration = transitionDurationMs
     const base = { transition: `all ${duration}ms ease-in-out` }
+
+    if (transition === 'none') return { opacity: 0 }
 
     switch (transition) {
       case 'fade':
         return {
           ...base,
-          opacity: isTransitioning ? 0 : 1,
+          opacity: 0,
         }
       case 'zoom':
         return {
           ...base,
-          transform: isTransitioning ? 'scale(0.9)' : 'scale(1)',
-          opacity: isTransitioning ? 0 : 1,
+          transform: 'scale(0.9)',
+          opacity: 0,
         }
       case 'slide':
         return {
           ...base,
-          transform: isTransitioning ? 'translateX(-100%)' : 'translateX(0)',
+          transform: 'translateX(-100px)',
+          opacity: 0,
         }
       case 'blur':
         return {
           ...base,
-          filter: isTransitioning ? 'blur(20px)' : 'blur(0)',
-          opacity: isTransitioning ? 0 : 1,
+          filter: 'blur(20px)',
+          opacity: 0,
         }
-      case 'none':
       default:
-        return {}
+        return { opacity: 0 }
     }
   }
 
@@ -372,33 +419,33 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       onMouseMove={showControlsTemporarily}
       onClick={togglePlay}
     >
-      {/* Previous slide (for transition) */}
-      {isTransitioning && previousSlide && (
-        <div className="absolute inset-0 flex items-center justify-center">
+      {/* Previous slide (for crossfade during transition) */}
+      {previousSlide && (
+        <div className="absolute inset-0 flex items-center justify-center z-0">
           <img
             src={previousSlide.imageUrl}
             alt=""
             className="max-w-full max-h-full object-contain"
-            style={getExitStyle(currentTransition)}
+            style={getPreviousSlideStyle(currentTransition)}
           />
         </div>
       )}
 
       {/* Current slide */}
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div className="absolute inset-0 flex items-center justify-center z-10">
         <img
           key={currentSlide?.id}
           src={currentSlide?.imageUrl}
           alt=""
           className="max-w-full max-h-full object-contain"
-          style={getEnterStyle(currentTransition)}
+          style={getCurrentSlideStyle(currentTransition)}
         />
       </div>
 
       {/* Caption */}
       {currentSlide?.caption && (
         <div
-          className={`absolute bottom-24 left-0 right-0 text-center transition-opacity duration-300 ${
+          className={`absolute bottom-24 left-0 right-0 text-center transition-opacity duration-300 z-20 ${
             showControls ? 'opacity-100' : 'opacity-0'
           }`}
         >
@@ -409,7 +456,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       )}
 
       {/* Progress bar */}
-      <div className="absolute top-0 left-0 right-0 h-1 bg-white/20">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-white/20 z-30">
         <div
           className="h-full bg-accent transition-all duration-50"
           style={{ width: `${progress}%` }}
@@ -418,7 +465,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
       {/* Slide indicators */}
       <div
-        className={`absolute top-4 left-0 right-0 flex justify-center gap-1 transition-opacity duration-300 ${
+        className={`absolute top-4 left-0 right-0 flex justify-center gap-1 transition-opacity duration-300 z-30 ${
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
       >
@@ -438,7 +485,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
       {/* Controls */}
       <div
-        className={`absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent transition-opacity duration-300 ${
+        className={`absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent transition-opacity duration-300 z-30 ${
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -500,7 +547,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
           goToPrevious()
         }}
         disabled={currentIndex === 0}
-        className={`absolute left-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/50 hover:bg-black/70 transition-all disabled:opacity-0 ${
+        className={`absolute left-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/50 hover:bg-black/70 transition-all disabled:opacity-0 z-30 ${
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
       >
@@ -512,7 +559,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
           goToNext()
         }}
         disabled={currentIndex === totalSlides - 1}
-        className={`absolute right-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/50 hover:bg-black/70 transition-all disabled:opacity-0 ${
+        className={`absolute right-4 top-1/2 -translate-y-1/2 p-4 rounded-full bg-black/50 hover:bg-black/70 transition-all disabled:opacity-0 z-30 ${
           showControls ? 'opacity-100' : 'opacity-0'
         }`}
       >
