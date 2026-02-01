@@ -1,8 +1,52 @@
+# Dependencies
 node_modules
+npm-debug.log*
+
+# Next.js build output
 .next
+out
+
+# Git
 .git
+.gitignore
+
+# Environment files (secrets)
+.env
 .env.local
 .env*.local
+.env.development
+.env.production
+
+# IDE/Editor
+.idea
+.vscode
+*.swp
+*.swo
+
+# Documentation
 *.md
+README*
+CHANGELOG*
+LICENSE
+
+# Agent/Claude files
 agent-os/
 .claude/
+
+# Testing
+coverage/
+.nyc_output/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker/
+
+# Misc
+*.log
+*.tmp
+scripts/
