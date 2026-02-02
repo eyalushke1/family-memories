@@ -43,6 +43,10 @@ export async function DELETE(
 
   const { id } = await params
 
+  // Delete related records first (foreign key constraints)
+  await supabase.from('clip_profiles').delete().eq('clip_id', id)
+  await supabase.from('presentation_items').delete().eq('clip_id', id)
+
   const { error } = await supabase.from('clips').delete().eq('id', id)
 
   if (error) {
