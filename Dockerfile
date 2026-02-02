@@ -38,11 +38,14 @@ ENV HOSTNAME="0.0.0.0"
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy public assets
-COPY --from=builder /app/public ./public
+# Create public directory (may be empty)
+RUN mkdir -p public
+
+# Copy public assets if they exist
+COPY --from=builder /app/public/ ./public/
 
 # Create .next directory with correct permissions
-RUN mkdir .next && chown nextjs:nodejs .next
+RUN mkdir -p .next && chown nextjs:nodejs .next
 
 # Copy standalone build
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
