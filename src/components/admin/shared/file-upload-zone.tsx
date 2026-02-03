@@ -78,6 +78,7 @@ export function FileUploadZone({
 
   const isImage = accept.includes('image')
   const isVideo = accept.includes('video')
+  const isUploading = uploadProgress !== undefined && uploadProgress !== null
 
   return (
     <div className={className}>
@@ -87,17 +88,32 @@ export function FileUploadZone({
             <img
               src={preview}
               alt="Preview"
-              className="w-full h-48 object-cover rounded-lg"
+              className={cn("w-full h-48 object-cover rounded-lg", isUploading && "opacity-50")}
             />
           )}
           {isVideo && (
             <video
               src={preview}
-              className="w-full h-48 object-cover rounded-lg"
-              controls
+              className={cn("w-full h-48 object-cover rounded-lg", isUploading && "opacity-50")}
+              controls={!isUploading}
             />
           )}
-          {onClear && (
+          {/* Upload progress overlay */}
+          {isUploading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 rounded-lg">
+              <Loader2 className="w-8 h-8 animate-spin text-white mb-3" />
+              <div className="w-3/4 bg-white/20 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-accent h-full transition-all duration-300 ease-out"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-sm text-white mt-2">
+                Uploading... {Math.round(uploadProgress)}%
+              </p>
+            </div>
+          )}
+          {onClear && !isUploading && (
             <button
               onClick={onClear}
               className="absolute top-2 right-2 p-1 bg-black/60 rounded-full hover:bg-black/80 transition-colors"

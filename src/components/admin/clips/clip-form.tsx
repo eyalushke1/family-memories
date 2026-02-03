@@ -54,6 +54,7 @@ export function ClipForm({
   const [generatingThumbnail, setGeneratingThumbnail] = useState(false)
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null)
   const [thumbnailUploadProgress, setThumbnailUploadProgress] = useState<number | null>(null)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
 
   // Store pending files for new clips
   const pendingVideoFile = useRef<File | null>(null)
@@ -192,7 +193,12 @@ export function ClipForm({
       })
 
       xhr.addEventListener('error', () => {
-        reject(new Error('Network error during direct upload'))
+        // CORS errors also trigger 'error' event with status 0
+        if (xhr.status === 0) {
+          reject(new Error('CORS_ERROR: Direct upload blocked. Falling back to server upload.'))
+        } else {
+          reject(new Error('Network error during direct upload'))
+        }
       })
 
       xhr.addEventListener('timeout', () => {
@@ -231,10 +237,14 @@ export function ClipForm({
       xhr.addEventListener('load', () => {
         const responseText = xhr.responseText
         const isHtmlResponse = responseText.trim().startsWith('<') || responseText.includes('<!DOCTYPE')
+        const fileSizeMB = Math.round(file.size / (1024 * 1024))
 
         if (xhr.status >= 200 && xhr.status < 300) {
           if (isHtmlResponse) {
-            reject(new Error('Server returned an unexpected response. The file may be too large.'))
+            reject(new Error(
+              `Server returned HTML instead of JSON. File (${fileSizeMB}MB) may be too large for server upload. ` +
+              'Try compressing the video or using a smaller file.'
+            ))
             return
           }
           try {
@@ -248,14 +258,23 @@ export function ClipForm({
             reject(new Error('Invalid response from server. Please try again.'))
           }
         } else if (xhr.status === 413) {
-          reject(new Error('File too large. Maximum upload size is 500MB. Please compress the video.'))
+          reject(new Error(
+            `File too large (${fileSizeMB}MB). Maximum server upload size is 100MB. ` +
+            'Please compress the video or use a smaller file.'
+          ))
         } else if (xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
-          reject(new Error('Server timeout or unavailable. The file may be too large to process. Please try a smaller file.'))
+          reject(new Error(
+            `Server timeout (${xhr.status}). File (${fileSizeMB}MB) may be too large. ` +
+            'Please compress the video to under 100MB.'
+          ))
         } else if (xhr.status === 0) {
           reject(new Error('Connection lost during upload. Please check your network and try again.'))
         } else {
           if (isHtmlResponse) {
-            reject(new Error(`Upload failed (${xhr.status}). The server may be overloaded or the file too large.`))
+            reject(new Error(
+              `Upload failed (${xhr.status}). Server returned HTML error. ` +
+              `File (${fileSizeMB}MB) may be too large. Try compressing the video.`
+            ))
             return
           }
           try {
@@ -289,13 +308,35 @@ export function ClipForm({
     onProgress?: (progress: number) => void
   ): Promise<string> => {
     const DIRECT_UPLOAD_THRESHOLD = 50 * 1024 * 1024 // 50MB
+    const SERVER_UPLOAD_MAX = 100 * 1024 * 1024 // 100MB - max size for server fallback
 
     if (file.size > DIRECT_UPLOAD_THRESHOLD) {
       try {
         return await uploadDirect(file, type, clipId, onProgress)
       } catch (error) {
-        // If direct upload fails (e.g., local dev), fall back to server upload
-        console.warn('Direct upload failed, trying server upload:', error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        // If direct upload fails due to CORS or other issues, fall back to server upload
+        const isCorsError = errorMessage.includes('CORS_ERROR')
+        console.warn('Direct upload failed, trying server upload:', errorMessage)
+
+        // Reset progress before server upload
+        if (onProgress) onProgress(0)
+
+        // For very large files (>100MB), don't attempt server upload - it will likely fail
+        if (file.size > SERVER_UPLOAD_MAX) {
+          const sizeMB = Math.round(file.size / (1024 * 1024))
+          if (isCorsError) {
+            throw new Error(
+              `Direct upload is blocked (CORS). File is ${sizeMB}MB which is too large for server upload. ` +
+              'Please contact your administrator to configure storage CORS settings, or compress the video to under 100MB.'
+            )
+          }
+          throw new Error(
+            `File is ${sizeMB}MB which is too large for server upload. ` +
+            'Please compress the video to under 100MB, or contact your administrator to fix direct upload.'
+          )
+        }
+
         return await uploadViaServer(file, type, clipId, onProgress)
       }
     }
@@ -374,6 +415,7 @@ export function ClipForm({
       } else {
         // For new clips:
         // 1. Create clip with placeholder video_path
+        setUploadStatus('Creating clip record...')
         const createRes = await fetch('/api/admin/clips', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -395,8 +437,10 @@ export function ClipForm({
         }
 
         const newClipId = createData.data.id
+        const videoSizeMB = Math.round(pendingVideoFile.current!.size / (1024 * 1024))
 
         // 2. Upload video file with progress tracking
+        setUploadStatus(`Uploading video (${videoSizeMB}MB)...`)
         setVideoUploadProgress(0)
         const videoStoragePath = await uploadFile(
           pendingVideoFile.current!,
@@ -409,6 +453,7 @@ export function ClipForm({
         // 3. Upload thumbnail if available (either manual or auto-generated)
         let thumbnailStoragePath: string | null = null
         if (pendingThumbnailFile.current) {
+          setUploadStatus('Uploading thumbnail...')
           setThumbnailUploadProgress(0)
           thumbnailStoragePath = await uploadFile(
             pendingThumbnailFile.current,
@@ -420,6 +465,7 @@ export function ClipForm({
         }
 
         // 4. Save profile associations
+        setUploadStatus('Saving profile associations...')
         await saveProfileAssociations(newClipId)
 
         // 5. Update clip with real paths (upload API already updates DB, but let's refresh)
@@ -438,6 +484,7 @@ export function ClipForm({
       setSaving(false)
       setVideoUploadProgress(null)
       setThumbnailUploadProgress(null)
+      setUploadStatus(null)
     }
   }
 
@@ -744,6 +791,42 @@ export function ClipForm({
               label={isActive ? 'Active (visible in browse)' : 'Archived'}
             />
 
+            {/* Upload Progress Status */}
+            {saving && (uploadStatus || videoUploadProgress !== null) && (
+              <div className="bg-bg-card border border-border rounded-lg p-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm font-medium">
+                    {uploadStatus || 'Processing...'}
+                  </span>
+                </div>
+                {videoUploadProgress !== null && (
+                  <div className="space-y-1">
+                    <div className="w-full bg-bg-secondary rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-accent h-full transition-all duration-300 ease-out"
+                        style={{ width: `${videoUploadProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-text-muted text-right">
+                      {Math.round(videoUploadProgress)}% complete
+                    </p>
+                  </div>
+                )}
+                {thumbnailUploadProgress !== null && (
+                  <div className="space-y-1 mt-2">
+                    <p className="text-xs text-text-muted">Thumbnail upload</p>
+                    <div className="w-full bg-bg-secondary rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-accent h-full transition-all duration-300 ease-out"
+                        style={{ width: `${thumbnailUploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             <div className="flex justify-end gap-3">
@@ -757,9 +840,15 @@ export function ClipForm({
               <button
                 type="submit"
                 disabled={saving || generatingThumbnail}
-                className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50"
+                className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50 min-w-[100px]"
               >
-                {saving ? 'Saving...' : isEditing ? 'Update' : 'Create'}
+                {saving
+                  ? videoUploadProgress !== null
+                    ? `Uploading ${Math.round(videoUploadProgress)}%`
+                    : 'Saving...'
+                  : isEditing
+                    ? 'Update'
+                    : 'Create'}
               </button>
             </div>
           </form>

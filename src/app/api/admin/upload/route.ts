@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
@@ -8,6 +8,14 @@ import { MediaPaths } from '@/lib/storage/media-paths'
 // Route segment config for large file uploads
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // 5 minutes for large uploads
+
+// Middleware to always return JSON errors, never HTML
+function jsonErrorResponse(message: string, status: number): NextResponse {
+  return NextResponse.json(
+    { success: false, error: message },
+    { status, headers: { 'Content-Type': 'application/json' } }
+  )
+}
 
 type UploadType = 'avatar' | 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail'
 
@@ -38,12 +46,28 @@ export async function POST(request: NextRequest) {
     const err = checkSupabase()
     if (err) return err
 
+    // Check content-length header first to reject oversized requests early
+    const contentLength = request.headers.get('content-length')
+    if (contentLength) {
+      const size = parseInt(contentLength, 10)
+      const maxSize = 500 * 1024 * 1024 // 500MB
+      if (size > maxSize) {
+        return jsonErrorResponse(
+          'File too large. Maximum size for server upload is 500MB. Use direct upload for larger files.',
+          413
+        )
+      }
+    }
+
     let formData: FormData
     try {
       formData = await request.formData()
     } catch (e) {
       console.error('Failed to parse form data:', e)
-      return errorResponse('Failed to parse upload data. File may be too large.', 413)
+      return jsonErrorResponse(
+        'Failed to parse upload data. File may be too large for server upload. Try a smaller file or use direct upload.',
+        413
+      )
     }
 
     const file = formData.get('file') as File | null
@@ -176,9 +200,18 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Upload error:', error)
     const message = error instanceof Error ? error.message : 'Upload failed'
-    if (message.includes('memory') || message.includes('heap')) {
-      return errorResponse('File too large to process. Please use a smaller file or compress the video.', 413)
+    if (message.includes('memory') || message.includes('heap') || message.includes('ENOMEM')) {
+      return jsonErrorResponse(
+        'File too large to process. Please use a smaller file or compress the video.',
+        413
+      )
     }
-    return errorResponse(message, 500)
+    if (message.includes('timeout') || message.includes('ETIMEDOUT')) {
+      return jsonErrorResponse(
+        'Upload timed out. Please try a smaller file or check your connection.',
+        408
+      )
+    }
+    return jsonErrorResponse(message, 500)
   }
 }
