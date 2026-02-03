@@ -126,7 +126,105 @@ export function ClipForm({
     }
   }
 
-  // Direct upload to storage using presigned URL (for large files)
+  // Chunked upload through server - works around CORS by proxying through Next.js
+  // Sends small chunks that fit within Cloud Run's body limit
+  const uploadChunked = async (
+    file: File,
+    type: 'video' | 'thumbnail' | 'intro-video' | 'intro-thumbnail',
+    clipId: string,
+    onProgress?: (progress: number) => void
+  ): Promise<string> => {
+    const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB chunks (under Cloud Run's ~32MB limit)
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+
+    // 1. Initialize upload session
+    const initRes = await fetch('/api/admin/chunked-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'init',
+        type,
+        id: clipId,
+        filename: file.name,
+        totalChunks,
+      }),
+    })
+
+    const initData = await initRes.json()
+    if (!initData.success) {
+      throw new Error(initData.error || 'Failed to initialize chunked upload')
+    }
+
+    const { sessionId } = initData.data
+
+    // 2. Upload chunks
+    let uploadedChunks = 0
+
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, file.size)
+        const chunk = file.slice(start, end)
+
+        const formData = new FormData()
+        formData.append('sessionId', sessionId)
+        formData.append('chunkIndex', i.toString())
+        formData.append('chunk', chunk)
+
+        const chunkRes = await fetch('/api/admin/chunked-upload', {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (!chunkRes.ok) {
+          const errorData = await chunkRes.json().catch(() => ({}))
+          throw new Error(errorData.error || `Failed to upload chunk ${i + 1}/${totalChunks}`)
+        }
+
+        uploadedChunks++
+
+        // Report progress
+        if (onProgress) {
+          onProgress((uploadedChunks / totalChunks) * 95) // Reserve 5% for final assembly
+        }
+      }
+
+      // 3. Complete upload (assemble chunks on server)
+      if (onProgress) onProgress(95)
+
+      const completeRes = await fetch('/api/admin/chunked-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'complete',
+          sessionId,
+        }),
+      })
+
+      const completeData = await completeRes.json()
+      if (!completeData.success) {
+        throw new Error(completeData.error || 'Failed to complete chunked upload')
+      }
+
+      if (onProgress) onProgress(100)
+
+      return completeData.data.path
+    } catch (error) {
+      // Clean up session on failure
+      try {
+        await fetch('/api/admin/chunked-upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        })
+      } catch {
+        console.error('Failed to clean up upload session')
+      }
+      throw error
+    }
+  }
+
+  // Direct upload to storage using presigned URL (fastest if CORS is configured)
   const uploadDirect = async (
     file: File,
     type: 'video' | 'thumbnail',
@@ -195,7 +293,7 @@ export function ClipForm({
       xhr.addEventListener('error', () => {
         // CORS errors also trigger 'error' event with status 0
         if (xhr.status === 0) {
-          reject(new Error('CORS_ERROR: Direct upload blocked. Falling back to server upload.'))
+          reject(new Error('CORS_ERROR: Direct upload blocked. Will try multipart upload.'))
         } else {
           reject(new Error('Network error during direct upload'))
         }
@@ -300,47 +398,44 @@ export function ClipForm({
     })
   }
 
-  // Main upload function - uses direct upload for large files
+  // Main upload function - uses appropriate strategy based on file size
   const uploadFile = async (
     file: File,
     type: 'video' | 'thumbnail',
     clipId: string,
     onProgress?: (progress: number) => void
   ): Promise<string> => {
-    const DIRECT_UPLOAD_THRESHOLD = 50 * 1024 * 1024 // 50MB
-    const SERVER_UPLOAD_MAX = 100 * 1024 * 1024 // 100MB - max size for server fallback
+    const CHUNKED_THRESHOLD = 20 * 1024 * 1024 // 20MB - use chunked upload for larger files
+    const sizeMB = Math.round(file.size / (1024 * 1024))
 
-    if (file.size > DIRECT_UPLOAD_THRESHOLD) {
+    // For large files (>20MB), use chunked upload through server
+    // This bypasses CORS issues by proxying through Next.js in small chunks
+    if (file.size > CHUNKED_THRESHOLD) {
+      console.log(`Using chunked upload for ${sizeMB}MB ${type} file`)
+
       try {
+        // First try direct upload (fastest if CORS is configured)
         return await uploadDirect(file, type, clipId, onProgress)
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error)
-        // If direct upload fails due to CORS or other issues, fall back to server upload
-        const isCorsError = errorMessage.includes('CORS_ERROR')
-        console.warn('Direct upload failed, trying server upload:', errorMessage)
+        console.warn('Direct upload failed, using chunked upload:', errorMessage)
 
-        // Reset progress before server upload
+        // Reset progress and use chunked upload as fallback
         if (onProgress) onProgress(0)
 
-        // For very large files (>100MB), don't attempt server upload - it will likely fail
-        if (file.size > SERVER_UPLOAD_MAX) {
-          const sizeMB = Math.round(file.size / (1024 * 1024))
-          if (isCorsError) {
-            throw new Error(
-              `Direct upload is blocked (CORS). File is ${sizeMB}MB which is too large for server upload. ` +
-              'Please contact your administrator to configure storage CORS settings, or compress the video to under 100MB.'
-            )
-          }
+        try {
+          return await uploadChunked(file, type, clipId, onProgress)
+        } catch (chunkedError) {
+          const chunkedErrorMessage = chunkedError instanceof Error ? chunkedError.message : String(chunkedError)
           throw new Error(
-            `File is ${sizeMB}MB which is too large for server upload. ` +
-            'Please compress the video to under 100MB, or contact your administrator to fix direct upload.'
+            `Failed to upload ${sizeMB}MB file. ` +
+            `Error: ${chunkedErrorMessage}`
           )
         }
-
-        return await uploadViaServer(file, type, clipId, onProgress)
       }
     }
 
+    // For small files (<20MB), use regular server upload
     return await uploadViaServer(file, type, clipId, onProgress)
   }
 

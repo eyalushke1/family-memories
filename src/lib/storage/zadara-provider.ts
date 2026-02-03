@@ -8,7 +8,7 @@ import {
   CopyObjectCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
-import type { StorageProvider, StorageFile, UploadOptions } from './types'
+import type { StorageProvider, StorageFile, UploadOptions, FileMetadata } from './types'
 
 interface ZadaraConfig {
   endpoint: string
@@ -75,6 +75,35 @@ export class ZadaraStorageProvider implements StorageProvider {
       new GetObjectCommand({
         Bucket: this.config.bucketName,
         Key: path,
+      })
+    )
+
+    const bytes = await response.Body?.transformToByteArray()
+    if (!bytes) throw new Error(`Empty response for ${path}`)
+    return Buffer.from(bytes)
+  }
+
+  async getMetadata(path: string): Promise<FileMetadata> {
+    const response = await this.client.send(
+      new HeadObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: path,
+      })
+    )
+
+    return {
+      size: response.ContentLength ?? 0,
+      contentType: response.ContentType,
+      lastModified: response.LastModified,
+    }
+  }
+
+  async downloadRange(path: string, start: number, end: number): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: path,
+        Range: `bytes=${start}-${end}`,
       })
     )
 

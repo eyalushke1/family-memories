@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import path from 'path'
-import type { StorageProvider, StorageFile, UploadOptions } from './types'
+import type { StorageProvider, StorageFile, UploadOptions, FileMetadata } from './types'
 
 const LOCAL_STORAGE_DIR = path.join(process.cwd(), '.local-storage')
 
@@ -22,6 +22,28 @@ export class LocalStorageProvider implements StorageProvider {
 
   async download(storagePath: string): Promise<Buffer> {
     return fs.readFile(this.resolvePath(storagePath))
+  }
+
+  async getMetadata(storagePath: string): Promise<FileMetadata> {
+    const fullPath = this.resolvePath(storagePath)
+    const stats = await fs.stat(fullPath)
+    return {
+      size: stats.size,
+      lastModified: stats.mtime,
+    }
+  }
+
+  async downloadRange(storagePath: string, start: number, end: number): Promise<Buffer> {
+    const fullPath = this.resolvePath(storagePath)
+    const fileHandle = await fs.open(fullPath, 'r')
+    try {
+      const length = end - start + 1
+      const buffer = Buffer.alloc(length)
+      await fileHandle.read(buffer, 0, length, start)
+      return buffer
+    } finally {
+      await fileHandle.close()
+    }
   }
 
   async getSignedUrl(storagePath: string): Promise<string> {

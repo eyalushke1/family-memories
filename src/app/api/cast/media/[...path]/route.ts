@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
 
+// Route config for streaming large files
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
 const CONTENT_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
   '.jpg': 'image/jpeg',
@@ -10,6 +14,9 @@ const CONTENT_TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska',
+  '.m4v': 'video/x-m4v',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
 }
@@ -30,6 +37,9 @@ function addCorsHeaders(headers: Headers): Headers {
   headers.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges')
   return headers
 }
+
+// Default chunk size for range requests (2MB)
+const DEFAULT_CHUNK_SIZE = 2 * 1024 * 1024
 
 export async function OPTIONS() {
   const headers = new Headers()
@@ -53,51 +63,70 @@ export async function GET(
     const contentType = getContentType(storagePath)
     const rangeHeader = request.headers.get('range')
 
-    // For video with Range header, support partial content (HTTP 206)
-    if (isVideoType(contentType) && rangeHeader) {
-      const data = await storage.download(storagePath)
-      const totalSize = data.length
+    // For video/audio files, use efficient range-based streaming
+    if (isVideoType(contentType) || contentType.startsWith('audio/')) {
+      // Get file metadata without downloading the whole file
+      const metadata = await storage.getMetadata(storagePath)
+      const totalSize = metadata.size
 
-      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-      if (!match) {
-        const headers = new Headers({
-          'Content-Type': contentType,
-          'Content-Length': String(totalSize),
-          'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=604800',
-        })
-        addCorsHeaders(headers)
-        return new NextResponse(new Uint8Array(data), { status: 200, headers })
+      if (rangeHeader) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+        if (match) {
+          const start = parseInt(match[1], 10)
+          // If no end specified, serve a chunk (not the whole file)
+          const requestedEnd = match[2] ? parseInt(match[2], 10) : undefined
+          const end = requestedEnd !== undefined
+            ? Math.min(requestedEnd, totalSize - 1)
+            : Math.min(start + DEFAULT_CHUNK_SIZE - 1, totalSize - 1)
+
+          const chunkSize = end - start + 1
+
+          // Download only the requested range
+          const data = await storage.downloadRange(storagePath, start, end)
+
+          const headers = new Headers({
+            'Content-Type': contentType,
+            'Content-Length': String(chunkSize),
+            'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=604800',
+          })
+          addCorsHeaders(headers)
+
+          return new NextResponse(new Uint8Array(data), {
+            status: 206,
+            headers,
+          })
+        }
       }
 
-      const start = parseInt(match[1], 10)
-      const end = match[2] ? parseInt(match[2], 10) : totalSize - 1
-      const chunkSize = end - start + 1
+      // No range header - return first chunk with Accept-Ranges to hint at streaming support
+      const end = Math.min(DEFAULT_CHUNK_SIZE - 1, totalSize - 1)
+      const data = await storage.downloadRange(storagePath, 0, end)
 
       const headers = new Headers({
         'Content-Type': contentType,
-        'Content-Length': String(chunkSize),
-        'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+        'Content-Length': String(data.length),
+        'Content-Range': `bytes 0-${end}/${totalSize}`,
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'public, max-age=604800',
       })
       addCorsHeaders(headers)
 
-      return new NextResponse(new Uint8Array(data.subarray(start, end + 1)), {
+      return new NextResponse(new Uint8Array(data), {
         status: 206,
         headers,
       })
     }
 
-    // Non-range request: return full file
+    // Non-video files: return full file (images, etc. are typically small)
     const data = await storage.download(storagePath)
-    const cacheMaxAge = isVideoType(contentType) ? 604800 : 86400
 
     const headers = new Headers({
       'Content-Type': contentType,
       'Content-Length': String(data.length),
       'Accept-Ranges': 'bytes',
-      'Cache-Control': `public, max-age=${cacheMaxAge}`,
+      'Cache-Control': 'public, max-age=86400',
     })
     addCorsHeaders(headers)
 

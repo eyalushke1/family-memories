@@ -361,6 +361,7 @@ export default function TVWatchPage() {
             ref={mainVideoRef}
             src={mainVideoUrl}
             playsInline
+            preload="metadata"
             onTimeUpdate={handleTimeUpdate}
             muted={isMuted}
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
