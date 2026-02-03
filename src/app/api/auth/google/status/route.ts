@@ -5,7 +5,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
 
 export async function GET(request: NextRequest) {
   // Verify admin access
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   // Get profile ID (already verified as admin)

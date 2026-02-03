@@ -10,7 +10,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, name, avatar_path, is_admin, created_at, updated_at')
+    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -33,8 +33,8 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('profiles')
-    .insert({ name: body.name.trim(), avatar_path: body.avatar_path, is_admin: body.is_admin })
-    .select('id, name, avatar_path, is_admin, created_at, updated_at')
+    .insert({ name: body.name.trim(), avatar_path: body.avatar_path, is_hidden: body.is_hidden })
+    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
     .single()
 
   if (error) {

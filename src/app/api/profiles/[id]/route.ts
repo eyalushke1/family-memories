@@ -15,7 +15,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, name, avatar_path, is_admin, created_at, updated_at')
+    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
     .eq('id', id)
     .single()
 
@@ -41,7 +41,7 @@ export async function PATCH(
     .from('profiles')
     .update({ ...body, updated_at: new Date().toISOString() })
     .eq('id', id)
-    .select('id, name, avatar_path, is_admin, created_at, updated_at')
+    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
     .single()
 
   if (error) {

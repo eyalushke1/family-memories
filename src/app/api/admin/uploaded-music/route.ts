@@ -22,7 +22,7 @@ interface MusicMetadata {
  * List all previously uploaded music files from the temp storage with metadata
  */
 export async function GET(request: NextRequest) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   try {

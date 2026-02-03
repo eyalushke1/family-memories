@@ -6,19 +6,19 @@ export interface Database {
           id: string
           name: string
           avatar_path: string | null
-          is_admin: boolean
+          is_hidden: boolean
           created_at: string
           updated_at: string
         }
         Insert: {
           name: string
           avatar_path?: string | null
-          is_admin?: boolean
+          is_hidden?: boolean
         }
         Update: {
           name?: string
           avatar_path?: string | null
-          is_admin?: boolean
+          is_hidden?: boolean
           updated_at?: string
         }
       }

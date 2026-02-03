@@ -8,7 +8,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
  * Create a new picker session. Returns pickerUri for user to select photos.
  */
 export async function POST(request: NextRequest) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   const profileId = getProfileId(request)!

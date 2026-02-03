@@ -9,7 +9,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
  * Only call after session.mediaItemsSet is true.
  */
 export async function GET(request: NextRequest) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   const profileId = getProfileId(request)!

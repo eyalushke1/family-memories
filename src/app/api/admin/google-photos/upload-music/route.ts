@@ -27,7 +27,7 @@ function formatDuration(seconds: number): string {
  * Upload a music file for use in a presentation
  */
 export async function POST(request: NextRequest) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   try {

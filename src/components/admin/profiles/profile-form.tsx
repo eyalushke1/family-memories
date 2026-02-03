@@ -17,7 +17,7 @@ interface ProfileFormProps {
 export function ProfileForm({ profile, onClose }: ProfileFormProps) {
   const { addProfile, updateProfile } = useAdminStore()
   const [name, setName] = useState(profile?.name ?? '')
-  const [isAdmin, setIsAdmin] = useState(profile?.is_admin ?? false)
+  const [isHidden, setIsHidden] = useState(profile?.is_hidden ?? false)
   const [avatarPath, setAvatarPath] = useState(profile?.avatar_path ?? null)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(
     profile?.avatar_path ? `/api/media/files/${profile.avatar_path}` : null
@@ -47,7 +47,7 @@ export function ProfileForm({ profile, onClose }: ProfileFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
-          is_admin: isAdmin,
+          is_hidden: isHidden,
           avatar_path: avatarPath,
         }),
       })
@@ -157,9 +157,9 @@ export function ProfileForm({ profile, onClose }: ProfileFormProps) {
             </FormField>
 
             <ToggleSwitch
-              checked={isAdmin}
-              onChange={setIsAdmin}
-              label="Admin privileges"
+              checked={isHidden}
+              onChange={setIsHidden}
+              label="Hide from profile selection"
             />
 
             {error && <p className="text-sm text-red-400">{error}</p>}

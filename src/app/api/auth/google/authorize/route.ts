@@ -6,7 +6,7 @@ import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
 
 export async function GET(request: NextRequest) {
   // Verify admin access
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   // Validate Google config

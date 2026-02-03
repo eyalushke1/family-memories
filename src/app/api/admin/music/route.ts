@@ -13,7 +13,7 @@ import { successResponse } from '@/lib/api/response'
  */
 export async function GET(request: NextRequest) {
   try {
-    const adminErr = await checkAdmin(request)
+    const adminErr = checkAdmin(request)
     if (adminErr) return adminErr
 
     const categoryId = request.nextUrl.searchParams.get('categoryId')

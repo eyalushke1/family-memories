@@ -38,17 +38,17 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Verify the profile is still an admin (security check)
+  // Verify the profile exists
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('is_admin')
+    .select('id')
     .eq('id', profileId)
     .single()
 
-  if (profileError || !profile?.is_admin) {
-    console.error('Profile is not admin or does not exist')
+  if (profileError || !profile) {
+    console.error('Profile does not exist')
     return NextResponse.redirect(
-      new URL('/admin/google-photos?error=access_denied', request.url)
+      new URL('/admin/google-photos?error=invalid_profile', request.url)
     )
   }
 

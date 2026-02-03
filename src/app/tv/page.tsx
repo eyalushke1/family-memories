@@ -95,6 +95,9 @@ export default function TVHomePage() {
     router.push('/tv/browse')
   }
 
+  // Filter out hidden profiles
+  const visibleProfiles = profiles.filter(p => !p.is_hidden)
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -112,7 +115,7 @@ export default function TVHomePage() {
         Use arrow keys to navigate, Enter to select
       </p>
       <div className="flex flex-wrap items-center justify-center gap-8 tv:gap-12">
-        {profiles.map((profile, index) => (
+        {visibleProfiles.map((profile, index) => (
           <TVProfileCard
             key={profile.id}
             profile={profile}
@@ -121,7 +124,7 @@ export default function TVHomePage() {
           />
         ))}
       </div>
-      {profiles.length === 0 && (
+      {visibleProfiles.length === 0 && (
         <p className="text-white/60 text-xl">
           No profiles found. Add profiles through the admin panel.
         </p>

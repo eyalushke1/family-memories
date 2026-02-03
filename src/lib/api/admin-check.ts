@@ -1,31 +1,20 @@
 import { NextRequest } from 'next/server'
-import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
 import { errorResponse } from './response'
 
 /**
- * Verify that the current request is from an admin user.
- * Returns an error response if not admin, or null if OK.
- * Usage: const err = await checkAdmin(request); if (err) return err;
+ * Check if a profile is selected (for features that require a profile context).
+ * Admin access is controlled by PIN code via AdminAuthGuard, not by profile.
+ * This function only checks if a profile is selected for features like Google Photos
+ * that need to store data per-profile.
+ *
+ * Returns an error response if no profile selected, or null if OK.
+ * Usage: const err = checkAdmin(request); if (err) return err;
  */
-export async function checkAdmin(request: NextRequest) {
-  if (!isSupabaseConfigured) {
-    return errorResponse('Database not configured', 500)
-  }
-
+export function checkAdmin(request: NextRequest) {
   const profileId = request.cookies.get('fm-profile-id')?.value
 
   if (!profileId) {
-    return errorResponse('Profile not selected', 401)
-  }
-
-  const { data: profile, error } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', profileId)
-    .single()
-
-  if (error || !profile?.is_admin) {
-    return errorResponse('Admin access required', 403)
+    return errorResponse('Please select a profile first to use this feature', 401)
   }
 
   return null

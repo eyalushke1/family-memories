@@ -12,7 +12,7 @@ interface RouteParams {
  * Get session status. Poll until mediaItemsSet is true.
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   const profileId = getProfileId(request)!
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  * Delete/cleanup a session after use.
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const adminErr = await checkAdmin(request)
+  const adminErr = checkAdmin(request)
   if (adminErr) return adminErr
 
   const profileId = getProfileId(request)!

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useAdminStore } from '@/stores/admin-store'
 import { ProfileAvatar } from '@/components/profiles/profile-avatar'
 import { ConfirmDialog } from '@/components/admin/shared/confirm-dialog'
-import { Pencil, Trash2, Shield } from 'lucide-react'
+import { Pencil, Trash2, EyeOff } from 'lucide-react'
 import type { ProfileRow } from '@/types/database'
 
 interface ProfileListProps {
@@ -62,12 +62,12 @@ export function ProfileList({ profiles, onEdit }: ProfileListProps) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold truncate">{profile.name}</h3>
-                {profile.is_admin && (
-                  <Shield size={16} className="text-accent flex-shrink-0" />
+                {profile.is_hidden && (
+                  <EyeOff size={16} className="text-text-muted flex-shrink-0" />
                 )}
               </div>
               <p className="text-sm text-text-muted">
-                {profile.is_admin ? 'Admin' : 'Viewer'}
+                {profile.is_hidden ? 'Hidden from selection' : 'Visible'}
               </p>
             </div>
 
