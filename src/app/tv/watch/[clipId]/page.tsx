@@ -95,10 +95,14 @@ export default function TVWatchPage() {
   const [duration, setDuration] = useState(0)
   const [isBuffering, setIsBuffering] = useState(false)
   const [bufferedPercent, setBufferedPercent] = useState(0)
+  const [introLoading, setIntroLoading] = useState(true)
+  const [introError, setIntroError] = useState(false)
+  const [videoError, setVideoError] = useState<string | null>(null)
 
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const { goBack } = useTVNavigation()
 
@@ -207,37 +211,75 @@ export default function TVWatchPage() {
     }, 5000)
   }, [isPlaying, isBuffering])
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) {
         clearTimeout(controlsTimeoutRef.current)
       }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current)
+      }
     }
   }, [])
 
-  // Auto-play intro when ready
+  // Auto-play intro when ready - wait for video to be loaded
   useEffect(() => {
     if (playState === 'intro' && introVideoRef.current) {
-      const playIntro = async () => {
+      const video = introVideoRef.current
+      setIntroLoading(true)
+      setIntroError(false)
+
+      const attemptPlay = async () => {
         try {
-          // Set muted first to ensure autoplay works (browser policy)
-          introVideoRef.current!.muted = false
-          await introVideoRef.current!.play()
+          // Try with sound first
+          video.muted = false
+          await video.play()
+          console.log('[TV Player] Intro playing with sound')
+          setIntroLoading(false)
         } catch (err) {
-          console.error('Intro autoplay failed, trying muted:', err)
-          // If autoplay fails, try muted
+          console.warn('[TV Player] Intro autoplay with sound failed, trying muted:', err)
           try {
-            introVideoRef.current!.muted = true
-            await introVideoRef.current!.play()
+            video.muted = true
+            await video.play()
+            console.log('[TV Player] Intro playing muted')
+            setIntroLoading(false)
           } catch (err2) {
-            console.error('Muted autoplay also failed:', err2)
+            console.error('[TV Player] Intro autoplay failed completely:', err2)
+            setIntroError(true)
+            setIntroLoading(false)
+            // Skip intro if it can't play
+            setTimeout(() => transitionToMain(), 1000)
           }
         }
       }
-      playIntro()
+
+      // Wait for video to have enough data to play
+      if (video.readyState >= 3) {
+        attemptPlay()
+      } else {
+        const handleCanPlay = () => {
+          video.removeEventListener('canplay', handleCanPlay)
+          attemptPlay()
+        }
+        video.addEventListener('canplay', handleCanPlay)
+
+        // Timeout if video never loads
+        const loadTimeout = setTimeout(() => {
+          video.removeEventListener('canplay', handleCanPlay)
+          console.error('[TV Player] Intro video load timeout')
+          setIntroError(true)
+          setIntroLoading(false)
+          transitionToMain()
+        }, 10000)
+
+        return () => {
+          clearTimeout(loadTimeout)
+          video.removeEventListener('canplay', handleCanPlay)
+        }
+      }
     }
-  }, [playState])
+  }, [playState, transitionToMain])
 
   // Auto-play main when no intro
   useEffect(() => {
@@ -280,18 +322,80 @@ export default function TVWatchPage() {
   }, [])
 
   const handleWaiting = useCallback(() => {
+    console.log('[TV Player] Video waiting/buffering')
     setIsBuffering(true)
     setShowControls(true)
   }, [])
 
   const handlePlaying = useCallback(() => {
+    console.log('[TV Player] Video playing')
     setIsBuffering(false)
     setIsPlaying(true)
+    setVideoError(null)
   }, [])
 
   const handlePause = useCallback(() => {
     setIsPlaying(false)
   }, [])
+
+  // Handle video stall - try to recover
+  const handleStalled = useCallback(() => {
+    console.warn('[TV Player] Video stalled - attempting recovery')
+    setIsBuffering(true)
+    setShowControls(true)
+
+    const video = mainVideoRef.current
+    if (video && !video.paused && !video.ended) {
+      // Clear any existing retry timeout
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current)
+      }
+
+      // Try to nudge playback after a short delay
+      retryTimeoutRef.current = setTimeout(() => {
+        if (video && !video.paused && !video.ended) {
+          console.log('[TV Player] Attempting to resume after stall')
+          const currentPos = video.currentTime
+          // Seek slightly forward to trigger new buffer request
+          video.currentTime = currentPos + 0.1
+          video.play().catch(console.error)
+        }
+      }, 2000)
+    }
+  }, [])
+
+  // Handle video error
+  const handleVideoError = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = e.currentTarget
+    const error = video.error
+    console.error('[TV Player] Video error:', error?.code, error?.message)
+    setVideoError(error?.message || 'Video playback error')
+    setIsBuffering(false)
+  }, [])
+
+  // Handle video ended - check if it really ended or got stuck
+  const handleVideoEnded = useCallback(() => {
+    const video = mainVideoRef.current
+    if (video) {
+      const percentPlayed = (video.currentTime / video.duration) * 100
+      console.log(`[TV Player] Video ended at ${percentPlayed.toFixed(1)}% (${video.currentTime}s / ${video.duration}s)`)
+
+      // If video ended but we're not near the end, it might have stalled
+      if (percentPlayed < 95 && video.duration > 0) {
+        console.warn('[TV Player] Video ended prematurely, attempting to continue')
+        setIsBuffering(true)
+        // Try to seek slightly and resume
+        video.currentTime = video.currentTime + 0.5
+        video.play().catch(err => {
+          console.error('[TV Player] Failed to resume:', err)
+          setIsBuffering(false)
+        })
+      } else {
+        // Actually ended - go back
+        goBack()
+      }
+    }
+  }, [goBack])
 
   // Keyboard controls
   useEffect(() => {
@@ -441,12 +545,53 @@ export default function TVWatchPage() {
         </button>
       )}
 
-      {/* Buffering indicator */}
+      {/* Intro loading indicator */}
+      {introLoading && isPlayingIntro && (
+        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-16 w-16 animate-spin text-accent" />
+            <p className="text-lg text-white/80">Loading intro...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Intro error indicator */}
+      {introError && isPlayingIntro && (
+        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black">
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-lg text-white/60">Intro unavailable, starting video...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Main video buffering indicator */}
       {isBuffering && playState === 'main' && (
         <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/40">
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-16 w-16 animate-spin text-white" />
             <p className="text-lg text-white/80">Buffering...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Video error indicator */}
+      {videoError && playState === 'main' && (
+        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/60">
+          <div className="flex flex-col items-center gap-4">
+            <p className="text-xl text-red-400">Playback Error</p>
+            <p className="text-sm text-white/60">{videoError}</p>
+            <button
+              onClick={() => {
+                setVideoError(null)
+                if (mainVideoRef.current) {
+                  mainVideoRef.current.load()
+                  mainVideoRef.current.play().catch(console.error)
+                }
+              }}
+              className="mt-4 px-6 py-3 bg-accent rounded-lg text-lg font-medium hover:bg-accent/80 transition-colors"
+            >
+              Retry
+            </button>
           </div>
         </div>
       )}
@@ -459,11 +604,19 @@ export default function TVWatchPage() {
             ref={introVideoRef}
             src={introVideoUrl}
             onEnded={handleIntroEnded}
-            onCanPlay={() => {
-              // Try to play when ready
-              if (playState === 'intro' && introVideoRef.current) {
-                introVideoRef.current.play().catch(console.error)
-              }
+            onLoadedData={() => {
+              console.log('[TV Player] Intro video loaded')
+              setIntroLoading(false)
+            }}
+            onError={(e) => {
+              console.error('[TV Player] Intro video error:', e)
+              setIntroError(true)
+              setIntroLoading(false)
+              // Skip to main video on intro error
+              setTimeout(() => transitionToMain(), 500)
+            }}
+            onStalled={() => {
+              console.warn('[TV Player] Intro video stalled')
             }}
             playsInline
             preload="auto"
@@ -489,6 +642,9 @@ export default function TVWatchPage() {
             onWaiting={handleWaiting}
             onPlaying={handlePlaying}
             onPause={handlePause}
+            onStalled={handleStalled}
+            onError={handleVideoError}
+            onEnded={handleVideoEnded}
             onCanPlay={() => setIsBuffering(false)}
             muted={isMuted}
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"

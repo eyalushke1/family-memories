@@ -37,8 +37,8 @@ function isVideoType(contentType: string): boolean {
   return contentType.startsWith('video/')
 }
 
-// Default chunk size for range requests (2MB)
-const DEFAULT_CHUNK_SIZE = 2 * 1024 * 1024
+// Default chunk size for range requests (5MB for smoother streaming)
+const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024
 
 export async function GET(
   request: NextRequest,
@@ -90,7 +90,24 @@ export async function GET(
         }
       }
 
-      // No range header - return first chunk with Accept-Ranges to hint at streaming support
+      // No range header - for small files, return full content
+      // For large files, return 200 with Accept-Ranges to let browser know it can request ranges
+      if (totalSize <= DEFAULT_CHUNK_SIZE) {
+        // Small file - just return all of it
+        const data = await storage.download(storagePath)
+        return new NextResponse(new Uint8Array(data), {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(totalSize),
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'public, max-age=604800',
+          },
+        })
+      }
+
+      // Large file without range header - return first chunk as 206
+      // This tells the browser the total size so it can make range requests
       const end = Math.min(DEFAULT_CHUNK_SIZE - 1, totalSize - 1)
       const data = await storage.downloadRange(storagePath, 0, end)
 
