@@ -2,16 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
 
 const CONTENT_TYPES: Record<string, string> = {
+  // Images
   '.webp': 'image/webp',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+  // Videos
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska',
+  '.m4v': 'video/x-m4v',
+  // Audio
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
 }
 
 function getContentType(filePath: string): string {
