@@ -12,9 +12,11 @@ import {
   RotateCcw,
   RotateCw,
   Loader2,
+  Maximize,
+  Minimize,
 } from 'lucide-react'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
-import { useTVFocusable, useTVNavigation } from '@/components/tv/tv-navigation-context'
+import { useTVNavigation } from '@/components/tv/tv-navigation-context'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -38,73 +40,55 @@ interface PresentationData {
 }
 
 function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '0:00'
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins}:${secs.toString().padStart(2, '0')}`
-}
-
-function TVControlButton({
-  id,
-  onClick,
-  children,
-  label,
-  row,
-  col,
-}: {
-  id: string
-  onClick: () => void
-  children: React.ReactNode
-  label: string
-  row: number
-  col: number
-}) {
-  const { ref, isFocused } = useTVFocusable(id, { row, col })
-
-  return (
-    <button
-      ref={ref as React.Ref<HTMLButtonElement>}
-      onClick={onClick}
-      className={`
-        p-4 tv:p-5 rounded-full transition-all duration-200
-        focus:outline-none
-        ${isFocused
-          ? 'bg-accent scale-110 ring-4 ring-white/30'
-          : 'bg-white/10 hover:bg-white/20'
-        }
-      `}
-      aria-label={label}
-    >
-      {children}
-    </button>
-  )
 }
 
 export default function TVWatchPage() {
   const router = useRouter()
   const params = useParams()
   const clipId = params.clipId as string
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Data state
   const [clip, setClip] = useState<ClipRow | null>(null)
   const [introClip, setIntroClip] = useState<IntroClipRow | null>(null)
   const [presentationData, setPresentationData] = useState<PresentationData | null>(null)
   const [playState, setPlayState] = useState<PlayState>('loading')
+
+  // UI state
   const [showControls, setShowControls] = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Video state
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [volume, setVolume] = useState(1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [isBuffering, setIsBuffering] = useState(false)
   const [bufferedPercent, setBufferedPercent] = useState(0)
-  const [introLoading, setIntroLoading] = useState(true)
-  const [introError, setIntroError] = useState(false)
+  const [isBuffering, setIsBuffering] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
 
+  // Intro state
+  const [introLoading, setIntroLoading] = useState(true)
+  const [introError, setIntroError] = useState(false)
+
+  // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const progressRef = useRef<HTMLDivElement>(null)
+  const stallRecoveryRef = useRef<NodeJS.Timeout | null>(null)
+  const lastTimeRef = useRef<number>(0)
+  const stallCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const { goBack } = useTVNavigation()
+
+  // Calculate progress percentage
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   // Load clip data
   useEffect(() => {
@@ -167,16 +151,10 @@ export default function TVWatchPage() {
     loadClip()
   }, [clipId])
 
-  // Preload main video while intro plays
-  useEffect(() => {
-    if (playState === 'intro' && mainVideoRef.current && clip) {
-      mainVideoRef.current.load()
-    }
-  }, [playState, clip])
-
   // Transition from intro to main
   const transitionToMain = useCallback(() => {
     if (playState !== 'intro') return
+    console.log('[TV Player] Transitioning from intro to main')
     setPlayState('transitioning')
 
     if (introVideoRef.current) {
@@ -188,17 +166,30 @@ export default function TVWatchPage() {
       return
     }
 
+    // Start main video
     if (mainVideoRef.current) {
       mainVideoRef.current.currentTime = 0
-      mainVideoRef.current.play().catch(console.error)
-      setIsPlaying(true)
+      const playPromise = mainVideoRef.current.play()
+      if (playPromise) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true)
+            console.log('[TV Player] Main video started after intro')
+          })
+          .catch((err) => {
+            console.error('[TV Player] Failed to start main video:', err)
+            // Try muted
+            if (mainVideoRef.current) {
+              mainVideoRef.current.muted = true
+              setIsMuted(true)
+              mainVideoRef.current.play().catch(console.error)
+            }
+          })
+      }
     }
 
     setTimeout(() => setPlayState('main'), 300)
   }, [playState, presentationData])
-
-  const handleIntroEnded = () => transitionToMain()
-  const handleSkipIntro = () => transitionToMain()
 
   // Show controls temporarily
   const showControlsTemporarily = useCallback(() => {
@@ -211,104 +202,190 @@ export default function TVWatchPage() {
     }, 5000)
   }, [isPlaying, isBuffering])
 
-  // Cleanup timeouts on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current)
-      }
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current)
-      }
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
+      if (stallRecoveryRef.current) clearTimeout(stallRecoveryRef.current)
+      if (stallCheckIntervalRef.current) clearInterval(stallCheckIntervalRef.current)
     }
   }, [])
 
-  // Auto-play intro when ready - wait for video to be loaded
+  // Intro video playback with LG TV compatibility
   useEffect(() => {
-    if (playState === 'intro' && introVideoRef.current) {
-      const video = introVideoRef.current
-      setIntroLoading(true)
-      setIntroError(false)
+    if (playState !== 'intro' || !introVideoRef.current) return
 
-      const attemptPlay = async () => {
+    const video = introVideoRef.current
+    setIntroLoading(true)
+    setIntroError(false)
+
+    const attemptPlay = async () => {
+      console.log('[TV Player] Attempting to play intro')
+      try {
+        // Start muted for better autoplay compatibility on Smart TVs
+        video.muted = true
+        await video.play()
+        // If successful, try to unmute
+        video.muted = false
+        setIsMuted(false)
+        console.log('[TV Player] Intro playing')
+        setIntroLoading(false)
+      } catch (err) {
+        console.warn('[TV Player] Intro play failed:', err)
+        // Keep it muted and try again
         try {
-          // Try with sound first
-          video.muted = false
+          video.muted = true
+          setIsMuted(true)
           await video.play()
-          console.log('[TV Player] Intro playing with sound')
+          console.log('[TV Player] Intro playing (muted)')
           setIntroLoading(false)
-        } catch (err) {
-          console.warn('[TV Player] Intro autoplay with sound failed, trying muted:', err)
-          try {
-            video.muted = true
-            await video.play()
-            console.log('[TV Player] Intro playing muted')
-            setIntroLoading(false)
-          } catch (err2) {
-            console.error('[TV Player] Intro autoplay failed completely:', err2)
-            setIntroError(true)
-            setIntroLoading(false)
-            // Skip intro if it can't play
-            setTimeout(() => transitionToMain(), 1000)
-          }
-        }
-      }
-
-      // Wait for video to have enough data to play
-      if (video.readyState >= 3) {
-        attemptPlay()
-      } else {
-        const handleCanPlay = () => {
-          video.removeEventListener('canplay', handleCanPlay)
-          attemptPlay()
-        }
-        video.addEventListener('canplay', handleCanPlay)
-
-        // Timeout if video never loads
-        const loadTimeout = setTimeout(() => {
-          video.removeEventListener('canplay', handleCanPlay)
-          console.error('[TV Player] Intro video load timeout')
+        } catch (err2) {
+          console.error('[TV Player] Intro completely failed:', err2)
           setIntroError(true)
           setIntroLoading(false)
-          transitionToMain()
-        }, 10000)
-
-        return () => {
-          clearTimeout(loadTimeout)
-          video.removeEventListener('canplay', handleCanPlay)
+          // Skip to main after delay
+          setTimeout(() => transitionToMain(), 1500)
         }
       }
     }
-  }, [playState, transitionToMain])
 
-  // Auto-play main when no intro
+    // Wait for metadata to be loaded
+    const handleLoadedMetadata = () => {
+      console.log('[TV Player] Intro metadata loaded, duration:', video.duration)
+      attemptPlay()
+    }
+
+    const handleCanPlay = () => {
+      if (introLoading) {
+        console.log('[TV Player] Intro can play')
+        attemptPlay()
+      }
+    }
+
+    const handleError = () => {
+      console.error('[TV Player] Intro error')
+      setIntroError(true)
+      setIntroLoading(false)
+      setTimeout(() => transitionToMain(), 500)
+    }
+
+    // Check if already ready
+    if (video.readyState >= 1) {
+      attemptPlay()
+    } else {
+      video.addEventListener('loadedmetadata', handleLoadedMetadata)
+      video.addEventListener('canplay', handleCanPlay)
+    }
+    video.addEventListener('error', handleError)
+
+    // Timeout failsafe
+    const timeout = setTimeout(() => {
+      if (introLoading) {
+        console.warn('[TV Player] Intro load timeout')
+        setIntroError(true)
+        setIntroLoading(false)
+        transitionToMain()
+      }
+    }, 8000)
+
+    return () => {
+      clearTimeout(timeout)
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      video.removeEventListener('canplay', handleCanPlay)
+      video.removeEventListener('error', handleError)
+    }
+  }, [playState, introLoading, transitionToMain])
+
+  // Main video autoplay (when no intro)
   useEffect(() => {
-    if (playState === 'main' && !introClip && mainVideoRef.current) {
-      const playMain = async () => {
+    if (playState !== 'main' || introClip || !mainVideoRef.current) return
+
+    const video = mainVideoRef.current
+    console.log('[TV Player] Starting main video (no intro)')
+
+    const attemptPlay = async () => {
+      try {
+        // Start muted for autoplay compatibility
+        video.muted = true
+        await video.play()
+        // Try to unmute
+        video.muted = false
+        setIsMuted(false)
+        setIsPlaying(true)
+      } catch (err) {
+        console.warn('[TV Player] Main autoplay failed:', err)
         try {
-          await mainVideoRef.current!.play()
+          video.muted = true
+          setIsMuted(true)
+          await video.play()
           setIsPlaying(true)
-        } catch (err) {
-          console.error('Main video autoplay failed:', err)
+        } catch (err2) {
+          console.error('[TV Player] Main video failed:', err2)
           setIsPlaying(false)
         }
       }
-      playMain()
+    }
+
+    if (video.readyState >= 1) {
+      attemptPlay()
+    } else {
+      video.addEventListener('loadedmetadata', attemptPlay, { once: true })
     }
   }, [playState, introClip])
+
+  // Stall detection for LG TVs - checks if video time is progressing
+  useEffect(() => {
+    if (playState !== 'main' || !mainVideoRef.current) return
+
+    const video = mainVideoRef.current
+    lastTimeRef.current = video.currentTime
+
+    // Check every 2 seconds if video is actually playing
+    stallCheckIntervalRef.current = setInterval(() => {
+      if (!video.paused && !video.ended && isPlaying) {
+        const currentPos = video.currentTime
+        const timeDiff = currentPos - lastTimeRef.current
+
+        // If less than 0.5 seconds of progress in 2 seconds, video might be stalled
+        if (timeDiff < 0.5 && currentPos < duration - 1) {
+          console.warn('[TV Player] Stall detected - time not progressing')
+          setIsBuffering(true)
+
+          // Try to recover by seeking slightly
+          if (stallRecoveryRef.current) clearTimeout(stallRecoveryRef.current)
+          stallRecoveryRef.current = setTimeout(() => {
+            if (video && !video.paused && !video.ended) {
+              console.log('[TV Player] Attempting stall recovery')
+              const seekTo = Math.min(currentPos + 0.5, duration - 1)
+              video.currentTime = seekTo
+              video.play().catch(console.error)
+            }
+          }, 1000)
+        }
+        lastTimeRef.current = currentPos
+      }
+    }, 2000)
+
+    return () => {
+      if (stallCheckIntervalRef.current) {
+        clearInterval(stallCheckIntervalRef.current)
+      }
+    }
+  }, [playState, isPlaying, duration])
 
   // Video event handlers
   const handleTimeUpdate = useCallback(() => {
     const video = mainVideoRef.current
-    if (video && video.duration) {
+    if (video) {
       setCurrentTime(video.currentTime)
-      setProgress((video.currentTime / video.duration) * 100)
+      lastTimeRef.current = video.currentTime
     }
   }, [])
 
-  const handleDurationChange = useCallback(() => {
+  const handleLoadedMetadata = useCallback(() => {
     const video = mainVideoRef.current
     if (video && video.duration && isFinite(video.duration)) {
+      console.log('[TV Player] Main video duration:', video.duration)
       setDuration(video.duration)
     }
   }, [])
@@ -324,7 +401,6 @@ export default function TVWatchPage() {
   const handleWaiting = useCallback(() => {
     console.log('[TV Player] Video waiting/buffering')
     setIsBuffering(true)
-    setShowControls(true)
   }, [])
 
   const handlePlaying = useCallback(() => {
@@ -338,106 +414,179 @@ export default function TVWatchPage() {
     setIsPlaying(false)
   }, [])
 
-  // Handle video stall - try to recover
-  const handleStalled = useCallback(() => {
-    console.warn('[TV Player] Video stalled - attempting recovery')
-    setIsBuffering(true)
-    setShowControls(true)
-
-    const video = mainVideoRef.current
-    if (video && !video.paused && !video.ended) {
-      // Clear any existing retry timeout
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current)
-      }
-
-      // Try to nudge playback after a short delay
-      retryTimeoutRef.current = setTimeout(() => {
-        if (video && !video.paused && !video.ended) {
-          console.log('[TV Player] Attempting to resume after stall')
-          const currentPos = video.currentTime
-          // Seek slightly forward to trigger new buffer request
-          video.currentTime = currentPos + 0.1
-          video.play().catch(console.error)
-        }
-      }, 2000)
-    }
-  }, [])
-
-  // Handle video error
-  const handleVideoError = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const video = e.currentTarget
-    const error = video.error
-    console.error('[TV Player] Video error:', error?.code, error?.message)
-    setVideoError(error?.message || 'Video playback error')
+  const handleCanPlayThrough = useCallback(() => {
+    console.log('[TV Player] Can play through')
     setIsBuffering(false)
   }, [])
 
-  // Handle video ended - check if it really ended or got stuck
-  const handleVideoEnded = useCallback(() => {
+  const handleError = useCallback(() => {
+    const video = mainVideoRef.current
+    if (video?.error) {
+      console.error('[TV Player] Video error:', video.error.code, video.error.message)
+      setVideoError(video.error.message || 'Playback error')
+    }
+    setIsBuffering(false)
+  }, [])
+
+  const handleEnded = useCallback(() => {
     const video = mainVideoRef.current
     if (video) {
       const percentPlayed = (video.currentTime / video.duration) * 100
-      console.log(`[TV Player] Video ended at ${percentPlayed.toFixed(1)}% (${video.currentTime}s / ${video.duration}s)`)
+      console.log(`[TV Player] Video ended at ${percentPlayed.toFixed(1)}%`)
 
-      // If video ended but we're not near the end, it might have stalled
-      if (percentPlayed < 95 && video.duration > 0) {
-        console.warn('[TV Player] Video ended prematurely, attempting to continue')
+      // If ended prematurely (before 90%), try to continue
+      if (percentPlayed < 90 && video.duration > 0) {
+        console.warn('[TV Player] Premature end, attempting recovery')
         setIsBuffering(true)
-        // Try to seek slightly and resume
-        video.currentTime = video.currentTime + 0.5
-        video.play().catch(err => {
-          console.error('[TV Player] Failed to resume:', err)
+        video.currentTime = video.currentTime + 1
+        video.play().catch((err) => {
+          console.error('[TV Player] Recovery failed:', err)
           setIsBuffering(false)
+          goBack()
         })
       } else {
-        // Actually ended - go back
         goBack()
       }
     }
   }, [goBack])
+
+  // Control functions
+  const togglePlayPause = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    if (isPlaying) {
+      video.pause()
+    } else {
+      video.play().catch(console.error)
+    }
+    showControlsTemporarily()
+  }, [isPlaying, showControlsTemporarily])
+
+  const toggleMute = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    video.muted = !isMuted
+    setIsMuted(!isMuted)
+    showControlsTemporarily()
+  }, [isMuted, showControlsTemporarily])
+
+  const handleVolumeChange = useCallback((newVolume: number) => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    video.volume = newVolume
+    setVolume(newVolume)
+    if (newVolume === 0) {
+      video.muted = true
+      setIsMuted(true)
+    } else if (isMuted) {
+      video.muted = false
+      setIsMuted(false)
+    }
+    showControlsTemporarily()
+  }, [isMuted, showControlsTemporarily])
+
+  const skipBackward = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    video.currentTime = Math.max(0, video.currentTime - 15)
+    showControlsTemporarily()
+  }, [showControlsTemporarily])
+
+  const skipForward = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    video.currentTime = Math.min(video.duration || 0, video.currentTime + 15)
+    showControlsTemporarily()
+  }, [showControlsTemporarily])
+
+  const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const video = mainVideoRef.current
+    const progressBar = progressRef.current
+    if (!video || !progressBar || !duration) return
+
+    const rect = progressBar.getBoundingClientRect()
+    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    video.currentTime = percent * duration
+    showControlsTemporarily()
+  }, [duration, showControlsTemporarily])
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current?.requestFullscreen()
+        setIsFullscreen(true)
+      } else {
+        await document.exitFullscreen()
+        setIsFullscreen(false)
+      }
+    } catch (err) {
+      console.error('Fullscreen error:', err)
+    }
+    showControlsTemporarily()
+  }, [showControlsTemporarily])
+
+  // Fullscreen change listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
 
   // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       showControlsTemporarily()
 
-      if (playState === 'intro' && e.key === 'Enter') {
-        handleSkipIntro()
+      if (playState === 'intro' && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault()
+        transitionToMain()
         return
       }
 
-      if (playState === 'main' && mainVideoRef.current) {
+      if (playState === 'main') {
         switch (e.key) {
           case ' ':
           case 'k':
           case 'Enter':
             e.preventDefault()
-            if (isPlaying) {
-              mainVideoRef.current.pause()
-            } else {
-              mainVideoRef.current.play()
-            }
+            togglePlayPause()
             break
           case 'm':
-            setIsMuted((m) => {
-              mainVideoRef.current!.muted = !m
-              return !m
-            })
+            toggleMute()
             break
           case 'ArrowLeft':
             e.preventDefault()
-            mainVideoRef.current.currentTime = Math.max(0, mainVideoRef.current.currentTime - 15)
+            skipBackward()
             break
           case 'ArrowRight':
             e.preventDefault()
-            mainVideoRef.current.currentTime = Math.min(
-              mainVideoRef.current.duration || 0,
-              mainVideoRef.current.currentTime + 15
-            )
+            skipForward()
+            break
+          case 'ArrowUp':
+            e.preventDefault()
+            handleVolumeChange(Math.min(1, volume + 0.1))
+            break
+          case 'ArrowDown':
+            e.preventDefault()
+            handleVolumeChange(Math.max(0, volume - 0.1))
+            break
+          case 'f':
+            toggleFullscreen()
             break
           case 'Escape':
+            if (isFullscreen) {
+              document.exitFullscreen().catch(console.error)
+            } else {
+              goBack()
+            }
+            break
           case 'Backspace':
             e.preventDefault()
             goBack()
@@ -448,42 +597,9 @@ export default function TVWatchPage() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [playState, isPlaying, showControlsTemporarily, goBack])
+  }, [playState, isPlaying, isFullscreen, volume, showControlsTemporarily, togglePlayPause, toggleMute, skipBackward, skipForward, toggleFullscreen, handleVolumeChange, goBack, transitionToMain])
 
-  // Control functions
-  const togglePlayPause = () => {
-    if (mainVideoRef.current) {
-      if (isPlaying) {
-        mainVideoRef.current.pause()
-      } else {
-        mainVideoRef.current.play()
-      }
-    }
-  }
-
-  const toggleMute = () => {
-    if (mainVideoRef.current) {
-      mainVideoRef.current.muted = !isMuted
-      setIsMuted(!isMuted)
-    }
-  }
-
-  const skipBackward = () => {
-    if (mainVideoRef.current) {
-      mainVideoRef.current.currentTime = Math.max(0, mainVideoRef.current.currentTime - 15)
-    }
-  }
-
-  const skipForward = () => {
-    if (mainVideoRef.current) {
-      mainVideoRef.current.currentTime = Math.min(
-        mainVideoRef.current.duration || 0,
-        mainVideoRef.current.currentTime + 15
-      )
-    }
-  }
-
-  // Render states
+  // Render loading state
   if (playState === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-black">
@@ -492,6 +608,7 @@ export default function TVWatchPage() {
     )
   }
 
+  // Render error state
   if (playState === 'error' || !clip) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-black">
@@ -506,6 +623,7 @@ export default function TVWatchPage() {
     )
   }
 
+  // Render presentation
   if (playState === 'presentation' && presentationData) {
     return <SlideshowPlayer presentationData={presentationData} />
   }
@@ -519,15 +637,17 @@ export default function TVWatchPage() {
 
   return (
     <div
+      ref={containerRef}
       className="relative min-h-screen bg-black overflow-hidden"
       onMouseMove={showControlsTemporarily}
-      onClick={showControlsTemporarily}
+      onMouseDown={showControlsTemporarily}
+      onTouchStart={showControlsTemporarily}
     >
       {/* Back button */}
       {showControls && (
         <button
           onClick={goBack}
-          className="absolute left-6 top-6 z-30 flex items-center gap-3 rounded-full bg-black/60 px-5 py-3 text-white transition-colors hover:bg-black/80"
+          className="absolute left-6 top-6 z-30 flex items-center gap-3 rounded-full bg-black/70 px-5 py-3 text-white transition-all hover:bg-black/90 cursor-pointer"
         >
           <ArrowLeft className="h-6 w-6" />
           <span className="text-lg">Back</span>
@@ -535,19 +655,19 @@ export default function TVWatchPage() {
       )}
 
       {/* Skip intro button */}
-      {isPlayingIntro && showControls && (
+      {isPlayingIntro && showControls && !introLoading && (
         <button
-          onClick={handleSkipIntro}
-          className="absolute right-6 bottom-32 z-30 flex items-center gap-3 rounded border-2 border-white/40 bg-black/80 px-6 py-3 text-white transition-all hover:bg-white hover:text-black"
+          onClick={transitionToMain}
+          className="absolute right-6 bottom-32 z-30 flex items-center gap-3 rounded border-2 border-white/50 bg-black/80 px-6 py-3 text-white transition-all hover:bg-white hover:text-black cursor-pointer"
         >
           <span className="text-lg font-semibold">Skip Intro</span>
           <SkipForward className="h-5 w-5" />
         </button>
       )}
 
-      {/* Intro loading indicator */}
+      {/* Intro loading overlay */}
       {introLoading && isPlayingIntro && (
-        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black">
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-16 w-16 animate-spin text-accent" />
             <p className="text-lg text-white/80">Loading intro...</p>
@@ -555,40 +675,41 @@ export default function TVWatchPage() {
         </div>
       )}
 
-      {/* Intro error indicator */}
+      {/* Intro error overlay */}
       {introError && isPlayingIntro && (
-        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black">
           <div className="flex flex-col items-center gap-4">
-            <p className="text-lg text-white/60">Intro unavailable, starting video...</p>
+            <p className="text-lg text-white/60">Starting video...</p>
           </div>
         </div>
       )}
 
-      {/* Main video buffering indicator */}
+      {/* Buffering overlay */}
       {isBuffering && playState === 'main' && (
-        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/40">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-16 w-16 animate-spin text-white" />
-            <p className="text-lg text-white/80">Buffering...</p>
+        <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+          <div className="flex flex-col items-center gap-4 bg-black/50 px-8 py-6 rounded-xl">
+            <Loader2 className="h-12 w-12 animate-spin text-white" />
+            <p className="text-white/80">Buffering...</p>
           </div>
         </div>
       )}
 
-      {/* Video error indicator */}
+      {/* Video error overlay */}
       {videoError && playState === 'main' && (
-        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/60">
-          <div className="flex flex-col items-center gap-4">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80">
+          <div className="flex flex-col items-center gap-4 p-8">
             <p className="text-xl text-red-400">Playback Error</p>
-            <p className="text-sm text-white/60">{videoError}</p>
+            <p className="text-sm text-white/60 max-w-md text-center">{videoError}</p>
             <button
               onClick={() => {
                 setVideoError(null)
+                setIsBuffering(true)
                 if (mainVideoRef.current) {
                   mainVideoRef.current.load()
                   mainVideoRef.current.play().catch(console.error)
                 }
               }}
-              className="mt-4 px-6 py-3 bg-accent rounded-lg text-lg font-medium hover:bg-accent/80 transition-colors"
+              className="mt-4 px-6 py-3 bg-accent rounded-lg text-lg font-medium hover:bg-accent/80 transition-colors cursor-pointer"
             >
               Retry
             </button>
@@ -596,34 +717,21 @@ export default function TVWatchPage() {
         </div>
       )}
 
-      {/* Videos */}
-      <div className="flex min-h-screen items-center justify-center">
+      {/* Video container */}
+      <div className="absolute inset-0 flex items-center justify-center">
         {/* Intro video */}
         {introVideoUrl && (
           <video
             ref={introVideoRef}
             src={introVideoUrl}
-            onEnded={handleIntroEnded}
-            onLoadedData={() => {
-              console.log('[TV Player] Intro video loaded')
-              setIntroLoading(false)
-            }}
-            onError={(e) => {
-              console.error('[TV Player] Intro video error:', e)
-              setIntroError(true)
-              setIntroLoading(false)
-              // Skip to main video on intro error
-              setTimeout(() => transitionToMain(), 500)
-            }}
-            onStalled={() => {
-              console.warn('[TV Player] Intro video stalled')
-            }}
+            onEnded={transitionToMain}
             playsInline
+            webkit-playsinline="true"
             preload="auto"
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
             style={{
               opacity: showIntroVideo ? 1 : 0,
-              zIndex: isTransitioning ? 5 : 10,
+              zIndex: showIntroVideo ? 15 : 5,
               pointerEvents: showIntroVideo ? 'auto' : 'none',
             }}
           />
@@ -635,130 +743,164 @@ export default function TVWatchPage() {
             ref={mainVideoRef}
             src={mainVideoUrl}
             playsInline
+            webkit-playsinline="true"
             preload="auto"
+            onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
-            onDurationChange={handleDurationChange}
             onProgress={handleProgress}
             onWaiting={handleWaiting}
             onPlaying={handlePlaying}
             onPause={handlePause}
-            onStalled={handleStalled}
-            onError={handleVideoError}
-            onEnded={handleVideoEnded}
-            onCanPlay={() => setIsBuffering(false)}
-            muted={isMuted}
+            onCanPlayThrough={handleCanPlayThrough}
+            onError={handleError}
+            onEnded={handleEnded}
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
             style={{
               opacity: showMainVideo ? 1 : 0,
-              zIndex: showMainVideo ? 10 : 5,
+              zIndex: showMainVideo ? 15 : 5,
               pointerEvents: showMainVideo ? 'auto' : 'none',
             }}
           />
         )}
       </div>
 
-      {/* TV-optimized controls */}
+      {/* Controls overlay */}
       {showControls && playState === 'main' && (
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent pt-24 pb-8 px-8 z-20">
-          {/* Progress bar with buffer indicator */}
-          <div className="relative w-full h-2 bg-white/20 rounded-full mb-4 overflow-hidden">
-            {/* Buffered progress */}
+        <div
+          className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black via-black/80 to-transparent"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-6 pb-6 pt-20">
+            {/* Progress bar - clickable */}
             <div
-              className="absolute h-full bg-white/30 transition-all duration-300"
-              style={{ width: `${bufferedPercent}%` }}
-            />
-            {/* Playback progress */}
-            <div
-              className="absolute h-full bg-accent transition-all duration-100"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-
-          {/* Time display */}
-          <div className="flex justify-between text-sm text-white/60 mb-4">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-
-          {/* Title and controls */}
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <h1 className="text-3xl tv:text-4xl font-bold text-white">
-                {clip.title}
-              </h1>
-              {clip.description && (
-                <p className="mt-2 text-lg text-white/60 max-w-2xl line-clamp-2">
-                  {clip.description}
-                </p>
-              )}
+              ref={progressRef}
+              className="relative w-full h-3 bg-white/20 rounded-full cursor-pointer group mb-3"
+              onClick={handleSeek}
+            >
+              {/* Buffered progress */}
+              <div
+                className="absolute h-full bg-white/30 rounded-full transition-all"
+                style={{ width: `${bufferedPercent}%` }}
+              />
+              {/* Playback progress */}
+              <div
+                className="absolute h-full bg-accent rounded-full"
+                style={{ width: `${progress}%` }}
+              />
+              {/* Seek handle */}
+              <div
+                className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ left: `calc(${progress}% - 8px)` }}
+              />
             </div>
 
-            {/* Control buttons */}
-            <div className="flex items-center gap-3">
-              {/* Skip back 15s */}
-              <TVControlButton
-                id="skip-back"
-                onClick={skipBackward}
-                label="Skip back 15 seconds"
-                row={1}
-                col={0}
-              >
-                <div className="relative">
-                  <RotateCcw size={28} />
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-bold">15</span>
-                </div>
-              </TVControlButton>
-
-              {/* Play/Pause */}
-              <TVControlButton
-                id="play-pause"
-                onClick={togglePlayPause}
-                label={isPlaying ? 'Pause' : 'Play'}
-                row={1}
-                col={1}
-              >
-                {isPlaying ? <Pause size={32} /> : <Play size={32} className="ml-1" />}
-              </TVControlButton>
-
-              {/* Skip forward 15s */}
-              <TVControlButton
-                id="skip-forward"
-                onClick={skipForward}
-                label="Skip forward 15 seconds"
-                row={1}
-                col={2}
-              >
-                <div className="relative">
-                  <RotateCw size={28} />
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-bold">15</span>
-                </div>
-              </TVControlButton>
-
-              {/* Mute */}
-              <TVControlButton
-                id="mute"
-                onClick={toggleMute}
-                label={isMuted ? 'Unmute' : 'Mute'}
-                row={1}
-                col={3}
-              >
-                {isMuted ? <VolumeX size={28} /> : <Volume2 size={28} />}
-              </TVControlButton>
+            {/* Time display */}
+            <div className="flex justify-between text-sm text-white/70 mb-4">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
             </div>
-          </div>
 
-          {/* Keyboard hints */}
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-white/40">
-            <span>Space/Enter: Play/Pause</span>
-            <span>←/→: Skip 15s</span>
-            <span>M: Mute</span>
-            <span>Back/Esc: Exit</span>
+            {/* Controls row */}
+            <div className="flex items-center justify-between gap-4">
+              {/* Left: Title */}
+              <div className="flex-1 min-w-0">
+                <h1 className="text-2xl md:text-3xl font-bold text-white truncate">
+                  {clip.title}
+                </h1>
+              </div>
+
+              {/* Center: Playback controls */}
+              <div className="flex items-center gap-2 md:gap-3">
+                {/* Skip back */}
+                <button
+                  onClick={skipBackward}
+                  className="p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                  title="Skip back 15s"
+                >
+                  <div className="relative">
+                    <RotateCcw size={24} />
+                    <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[9px] font-bold">15</span>
+                  </div>
+                </button>
+
+                {/* Play/Pause */}
+                <button
+                  onClick={togglePlayPause}
+                  className="p-4 md:p-5 rounded-full bg-white/20 hover:bg-white/30 transition-all cursor-pointer"
+                  title={isPlaying ? 'Pause' : 'Play'}
+                >
+                  {isPlaying ? <Pause size={28} /> : <Play size={28} className="ml-0.5" />}
+                </button>
+
+                {/* Skip forward */}
+                <button
+                  onClick={skipForward}
+                  className="p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                  title="Skip forward 15s"
+                >
+                  <div className="relative">
+                    <RotateCw size={24} />
+                    <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[9px] font-bold">15</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Right: Volume & Fullscreen */}
+              <div className="flex items-center gap-2 md:gap-3">
+                {/* Volume control */}
+                <div className="flex items-center gap-2 group">
+                  <button
+                    onClick={toggleMute}
+                    className="p-3 rounded-full bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                    title={isMuted ? 'Unmute' : 'Mute'}
+                  >
+                    {isMuted || volume === 0 ? <VolumeX size={22} /> : <Volume2 size={22} />}
+                  </button>
+                  {/* Volume slider - shows on hover */}
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={isMuted ? 0 : volume}
+                    onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                    className="w-0 group-hover:w-20 transition-all duration-200 accent-accent cursor-pointer"
+                  />
+                </div>
+
+                {/* Fullscreen */}
+                <button
+                  onClick={toggleFullscreen}
+                  className="p-3 rounded-full bg-white/10 hover:bg-white/20 transition-all cursor-pointer"
+                  title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                >
+                  {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Keyboard hints */}
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
+              <span>Space: Play/Pause</span>
+              <span>←/→: Skip 15s</span>
+              <span>↑/↓: Volume</span>
+              <span>M: Mute</span>
+              <span>F: Fullscreen</span>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Click to toggle play (when controls hidden) */}
+      {!showControls && playState === 'main' && (
+        <div
+          className="absolute inset-0 z-10 cursor-pointer"
+          onClick={togglePlayPause}
+        />
+      )}
+
       {/* Intro badge */}
-      {isPlayingIntro && (
+      {isPlayingIntro && !introLoading && (
         <div className="absolute left-6 bottom-32 z-20 rounded bg-white/10 backdrop-blur-sm px-4 py-2 border border-white/20">
           <span className="text-sm text-white/80 uppercase tracking-widest font-medium">
             Intro
