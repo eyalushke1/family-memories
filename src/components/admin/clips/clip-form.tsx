@@ -382,7 +382,7 @@ export function ClipForm({
             <div className="grid grid-cols-2 gap-6">
               <FormField label="Video">
                 <FileUploadZone
-                  accept="video/*"
+                  accept="video/*,.avi,.mkv,.m4v"
                   onUpload={handleVideoUpload}
                   preview={videoPreview}
                   onClear={() => {
@@ -391,14 +391,14 @@ export function ClipForm({
                     pendingVideoFile.current = null
                   }}
                   label="Drop video file here"
-                  maxSizeMB={500}
+                  maxSizeMB={2048}
                 />
               </FormField>
 
               <FormField label="Thumbnail">
                 <div className="space-y-2">
                   <FileUploadZone
-                    accept="image/*"
+                    accept="image/*,.heic,.heif"
                     onUpload={handleThumbnailUpload}
                     preview={thumbnailPreview}
                     onClear={() => {

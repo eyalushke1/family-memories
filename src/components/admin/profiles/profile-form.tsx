@@ -130,7 +130,7 @@ export function ProfileForm({ profile, onClose }: ProfileFormProps) {
           <form onSubmit={handleSubmit} className="space-y-6">
             <FormField label="Avatar">
               <FileUploadZone
-                accept="image/*"
+                accept="image/*,.heic,.heif"
                 onUpload={handleAvatarUpload}
                 preview={avatarPreview}
                 onClear={() => {
@@ -138,7 +138,7 @@ export function ProfileForm({ profile, onClose }: ProfileFormProps) {
                   setAvatarPreview(null)
                 }}
                 label="Drop avatar image here"
-                maxSizeMB={5}
+                maxSizeMB={20}
               />
               {!isEditing && avatarPreview && (
                 <p className="text-xs text-text-muted mt-1">

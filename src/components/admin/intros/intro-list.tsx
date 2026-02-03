@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { ConfirmDialog } from '@/components/admin/shared/confirm-dialog'
 import { MediaImage } from '@/components/shared/media-image'
-import { Pencil, Trash2, Clock } from 'lucide-react'
+import { Pencil, Trash2, Clock, Play, X } from 'lucide-react'
 import type { IntroClipRow } from '@/types/database'
 
 interface IntroListProps {
@@ -30,6 +30,7 @@ export function IntroList({
   const [deleteTarget, setDeleteTarget] = useState<IntroClipRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [previewIntro, setPreviewIntro] = useState<IntroClipRow | null>(null)
 
   const handleToggleActive = async (intro: IntroClipRow) => {
     const newValue = !intro.is_active
@@ -83,7 +84,7 @@ export function IntroList({
             key={intro.id}
             className="bg-bg-card border border-border rounded-xl overflow-hidden"
           >
-            <div className="aspect-video relative">
+            <div className="aspect-video relative group cursor-pointer" onClick={() => setPreviewIntro(intro)}>
               <MediaImage
                 src={
                   intro.thumbnail_path
@@ -93,6 +94,12 @@ export function IntroList({
                 alt={intro.name}
                 className="w-full h-full object-cover"
               />
+              {/* Play button overlay */}
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center">
+                  <Play size={32} className="text-black ml-1" />
+                </div>
+              </div>
               {intro.duration_seconds && (
                 <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-xs flex items-center gap-1">
                   <Clock size={12} />
@@ -100,7 +107,7 @@ export function IntroList({
                 </div>
               )}
               {!intro.is_active && (
-                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
                   <span className="text-sm text-text-muted">Archived</span>
                 </div>
               )}
@@ -160,6 +167,40 @@ export function IntroList({
         variant="danger"
         loading={deleting}
       />
+
+      {/* Video Preview Modal */}
+      {previewIntro && (
+        <div
+          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+          onClick={() => setPreviewIntro(null)}
+        >
+          <div
+            className="relative w-full max-w-4xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewIntro(null)}
+              className="absolute -top-12 right-0 p-2 text-white hover:text-gray-300 transition-colors"
+            >
+              <X size={24} />
+            </button>
+            <div className="bg-bg-card rounded-xl overflow-hidden">
+              <video
+                src={`/api/media/files/${previewIntro.video_path}`}
+                controls
+                autoPlay
+                className="w-full aspect-video"
+              />
+              <div className="p-4">
+                <h3 className="font-medium text-lg">{previewIntro.name}</h3>
+                {previewIntro.description && (
+                  <p className="text-sm text-text-muted mt-1">{previewIntro.description}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

@@ -235,7 +235,7 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
             <div className="grid grid-cols-2 gap-6">
               <FormField label="Video">
                 <FileUploadZone
-                  accept="video/*"
+                  accept="video/*,.avi,.mkv,.m4v"
                   onUpload={handleVideoUpload}
                   preview={videoPreview}
                   onClear={() => {
@@ -243,13 +243,13 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
                     pendingVideoFile.current = null
                   }}
                   label="Drop intro video here"
-                  maxSizeMB={100}
+                  maxSizeMB={2048}
                 />
               </FormField>
 
               <FormField label="Thumbnail">
                 <FileUploadZone
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   onUpload={handleThumbnailUpload}
                   preview={thumbnailPreview}
                   onClear={() => {
@@ -257,7 +257,7 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
                     pendingThumbnailFile.current = null
                   }}
                   label="Drop thumbnail image"
-                  maxSizeMB={10}
+                  maxSizeMB={50}
                 />
               </FormField>
             </div>

@@ -20,7 +20,7 @@ export function FileUploadZone({
   preview,
   onClear,
   label = 'Drop file here or click to upload',
-  maxSizeMB = 100,
+  maxSizeMB = 2048,
   className,
 }: FileUploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
@@ -34,7 +34,8 @@ export function FileUploadZone({
       // Check file size
       const maxBytes = maxSizeMB * 1024 * 1024
       if (file.size > maxBytes) {
-        setError(`File too large. Maximum size is ${maxSizeMB}MB`)
+        const sizeDisplay = maxSizeMB >= 1024 ? `${(maxSizeMB / 1024).toFixed(0)}GB` : `${maxSizeMB}MB`
+        setError(`File too large. Maximum size is ${sizeDisplay}`)
         return
       }
 
@@ -126,7 +127,7 @@ export function FileUploadZone({
               <Upload className="w-8 h-8 text-text-muted mb-2" />
               <p className="text-sm text-text-secondary">{label}</p>
               <p className="text-xs text-text-muted mt-1">
-                Max {maxSizeMB}MB
+                Max {maxSizeMB >= 1024 ? `${(maxSizeMB / 1024).toFixed(0)}GB` : `${maxSizeMB}MB`}
               </p>
             </>
           )}

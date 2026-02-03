@@ -345,6 +345,7 @@ export default function TVWatchPage() {
             ref={introVideoRef}
             src={introVideoUrl}
             onEnded={handleIntroEnded}
+            autoPlay
             playsInline
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
             style={{

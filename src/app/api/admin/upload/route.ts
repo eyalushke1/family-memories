@@ -10,14 +10,21 @@ type UploadType = 'avatar' | 'video' | 'thumbnail' | 'animated-thumbnail' | 'int
 function getContentType(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase()
   const mimeTypes: Record<string, string> = {
+    // Images
     jpg: 'image/jpeg',
     jpeg: 'image/jpeg',
     png: 'image/png',
     gif: 'image/gif',
     webp: 'image/webp',
+    heic: 'image/heic',
+    heif: 'image/heif',
+    // Videos
     mp4: 'video/mp4',
     webm: 'video/webm',
     mov: 'video/quicktime',
+    avi: 'video/x-msvideo',
+    mkv: 'video/x-matroska',
+    m4v: 'video/x-m4v',
   }
   return mimeTypes[ext || ''] || 'application/octet-stream'
 }
@@ -44,18 +51,25 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate file type
-  const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-  const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime']
+  const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
+  const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/x-m4v', 'video/avi']
+
+  // Also check by file extension for cases where MIME type detection fails
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif']
+  const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v']
 
   if (type === 'avatar' || type === 'thumbnail' || type === 'animated-thumbnail' || type === 'intro-thumbnail') {
-    if (!allowedImageTypes.includes(file.type)) {
-      return errorResponse('Invalid image type. Allowed: jpg, png, gif, webp', 400)
+    const isValidImage = allowedImageTypes.includes(file.type) || imageExtensions.includes(ext || '')
+    if (!isValidImage) {
+      return errorResponse('Invalid image type. Allowed: jpg, png, gif, webp, heic', 400)
     }
   }
 
   if (type === 'video' || type === 'intro-video') {
-    if (!allowedVideoTypes.includes(file.type)) {
-      return errorResponse('Invalid video type. Allowed: mp4, webm, mov', 400)
+    const isValidVideo = allowedVideoTypes.includes(file.type) || videoExtensions.includes(ext || '')
+    if (!isValidVideo) {
+      return errorResponse('Invalid video type. Allowed: mp4, webm, mov, avi, mkv, m4v', 400)
     }
   }
 
