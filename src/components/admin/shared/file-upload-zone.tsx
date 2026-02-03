@@ -12,6 +12,7 @@ interface FileUploadZoneProps {
   label?: string
   maxSizeMB?: number
   className?: string
+  uploadProgress?: number | null // 0-100 or null when not uploading
 }
 
 export function FileUploadZone({
@@ -22,6 +23,7 @@ export function FileUploadZone({
   label = 'Drop file here or click to upload',
   maxSizeMB = 2048,
   className,
+  uploadProgress,
 }: FileUploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -120,8 +122,25 @@ export function FileUploadZone({
             uploading && 'opacity-50 pointer-events-none'
           )}
         >
-          {uploading ? (
-            <Loader2 className="w-8 h-8 animate-spin text-text-muted" />
+          {uploading || uploadProgress !== undefined && uploadProgress !== null ? (
+            <div className="flex flex-col items-center gap-3 px-4 w-full">
+              <Loader2 className="w-8 h-8 animate-spin text-accent" />
+              {uploadProgress !== undefined && uploadProgress !== null ? (
+                <>
+                  <div className="w-full bg-bg-card rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-accent h-full transition-all duration-300 ease-out"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-text-secondary">
+                    Uploading... {Math.round(uploadProgress)}%
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-text-secondary">Processing...</p>
+              )}
+            </div>
           ) : (
             <>
               <Upload className="w-8 h-8 text-text-muted mb-2" />

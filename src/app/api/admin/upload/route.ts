@@ -5,6 +5,10 @@ import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
 
+// Route segment config for large file uploads
+export const dynamic = 'force-dynamic'
+export const maxDuration = 300 // 5 minutes for large uploads
+
 type UploadType = 'avatar' | 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail'
 
 function getContentType(filename: string): string {
