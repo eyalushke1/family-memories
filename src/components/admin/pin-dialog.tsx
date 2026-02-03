@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Lock, X } from 'lucide-react'
+import { setAdminAuthenticated } from './admin-auth-guard'
 
 interface PinDialogProps {
   onSuccess: () => void
@@ -77,7 +78,7 @@ export function PinDialog({ onSuccess, onCancel, title = 'Enter Admin PIN' }: Pi
 
       if (data.success && data.data.valid) {
         // Store auth in session
-        sessionStorage.setItem('admin-auth', 'true')
+        setAdminAuthenticated(true)
         onSuccess()
       } else {
         setError('Incorrect PIN')
