@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft } from 'lucide-react'
+import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings } from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/admin/clips', label: 'Clips', icon: Film },
   { href: '/admin/intros', label: 'Intro Clips', icon: Play },
   { href: '/admin/google-photos', label: 'Google Photos', icon: Image },
+  { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
 export function AdminSidebar() {
