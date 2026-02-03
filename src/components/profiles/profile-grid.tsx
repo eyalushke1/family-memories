@@ -129,7 +129,10 @@ export function ProfileGrid() {
               Admin Mode
             </span>
             <button
-              onClick={() => router.push('/admin')}
+              onClick={() => {
+                // Use window.location for full page navigation to ensure auth is read fresh
+                window.location.href = '/admin'
+              }}
               className="flex items-center gap-2 px-3 py-1 bg-white/10 hover:bg-white/20 rounded-full text-sm transition-colors"
             >
               <LogIn size={16} />
