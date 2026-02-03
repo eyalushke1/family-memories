@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { LoadingSpinner } from '@/components/shared/loading-spinner'
 import { useProfileStore } from '@/stores/profile-store'
 import { useTVFocusable } from '@/components/tv/tv-navigation-context'
+import { Settings } from 'lucide-react'
 import type { ProfileRow } from '@/types/database'
 import type { ApiResponse } from '@/types/api'
 
@@ -107,7 +108,16 @@ export default function TVHomePage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-12 px-8">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-12 px-8 relative">
+      {/* Admin button - top right corner */}
+      <button
+        onClick={() => router.push('/admin')}
+        className="absolute top-6 right-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-white/60 hover:text-white"
+      >
+        <Settings size={20} />
+        <span className="text-sm">Admin</span>
+      </button>
+
       <h1 className="text-4xl tv:text-6xl font-medium text-white">
         Who&apos;s watching?
       </h1>

@@ -2,7 +2,17 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, SkipForward, Play, Pause, Volume2, VolumeX } from 'lucide-react'
+import {
+  ArrowLeft,
+  SkipForward,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  RotateCcw,
+  RotateCw,
+  Loader2,
+} from 'lucide-react'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { useTVFocusable, useTVNavigation } from '@/components/tv/tv-navigation-context'
 import type { ApiResponse } from '@/types/api'
@@ -27,6 +37,12 @@ interface PresentationData {
   }[]
 }
 
+function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 function TVControlButton({
   id,
   onClick,
@@ -49,7 +65,7 @@ function TVControlButton({
       ref={ref as React.Ref<HTMLButtonElement>}
       onClick={onClick}
       className={`
-        p-4 tv:p-6 rounded-full transition-all duration-200
+        p-4 tv:p-5 rounded-full transition-all duration-200
         focus:outline-none
         ${isFocused
           ? 'bg-accent scale-110 ring-4 ring-white/30'
@@ -72,9 +88,13 @@ export default function TVWatchPage() {
   const [presentationData, setPresentationData] = useState<PresentationData | null>(null)
   const [playState, setPlayState] = useState<PlayState>('loading')
   const [showControls, setShowControls] = useState(true)
-  const [isPlaying, setIsPlaying] = useState(true)
+  const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [isBuffering, setIsBuffering] = useState(false)
+  const [bufferedPercent, setBufferedPercent] = useState(0)
 
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -82,6 +102,7 @@ export default function TVWatchPage() {
 
   const { goBack } = useTVNavigation()
 
+  // Load clip data
   useEffect(() => {
     async function loadClip() {
       try {
@@ -142,12 +163,14 @@ export default function TVWatchPage() {
     loadClip()
   }, [clipId])
 
+  // Preload main video while intro plays
   useEffect(() => {
     if (playState === 'intro' && mainVideoRef.current && clip) {
       mainVideoRef.current.load()
     }
   }, [playState, clip])
 
+  // Transition from intro to main
   const transitionToMain = useCallback(() => {
     if (playState !== 'intro') return
     setPlayState('transitioning')
@@ -164,6 +187,7 @@ export default function TVWatchPage() {
     if (mainVideoRef.current) {
       mainVideoRef.current.currentTime = 0
       mainVideoRef.current.play().catch(console.error)
+      setIsPlaying(true)
     }
 
     setTimeout(() => setPlayState('main'), 300)
@@ -172,16 +196,18 @@ export default function TVWatchPage() {
   const handleIntroEnded = () => transitionToMain()
   const handleSkipIntro = () => transitionToMain()
 
+  // Show controls temporarily
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true)
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current)
     }
     controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) setShowControls(false)
+      if (isPlaying && !isBuffering) setShowControls(false)
     }, 5000)
-  }, [isPlaying])
+  }, [isPlaying, isBuffering])
 
+  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) {
@@ -190,24 +216,81 @@ export default function TVWatchPage() {
     }
   }, [])
 
+  // Auto-play intro when ready
   useEffect(() => {
     if (playState === 'intro' && introVideoRef.current) {
-      introVideoRef.current.play().catch(console.error)
+      const playIntro = async () => {
+        try {
+          // Set muted first to ensure autoplay works (browser policy)
+          introVideoRef.current!.muted = false
+          await introVideoRef.current!.play()
+        } catch (err) {
+          console.error('Intro autoplay failed, trying muted:', err)
+          // If autoplay fails, try muted
+          try {
+            introVideoRef.current!.muted = true
+            await introVideoRef.current!.play()
+          } catch (err2) {
+            console.error('Muted autoplay also failed:', err2)
+          }
+        }
+      }
+      playIntro()
     }
   }, [playState])
 
+  // Auto-play main when no intro
   useEffect(() => {
     if (playState === 'main' && !introClip && mainVideoRef.current) {
-      mainVideoRef.current.play().catch(console.error)
+      const playMain = async () => {
+        try {
+          await mainVideoRef.current!.play()
+          setIsPlaying(true)
+        } catch (err) {
+          console.error('Main video autoplay failed:', err)
+          setIsPlaying(false)
+        }
+      }
+      playMain()
     }
   }, [playState, introClip])
 
-  // Video time update for progress bar
+  // Video event handlers
   const handleTimeUpdate = useCallback(() => {
     const video = mainVideoRef.current
     if (video && video.duration) {
+      setCurrentTime(video.currentTime)
       setProgress((video.currentTime / video.duration) * 100)
     }
+  }, [])
+
+  const handleDurationChange = useCallback(() => {
+    const video = mainVideoRef.current
+    if (video && video.duration && isFinite(video.duration)) {
+      setDuration(video.duration)
+    }
+  }, [])
+
+  const handleProgress = useCallback(() => {
+    const video = mainVideoRef.current
+    if (video && video.buffered.length > 0 && video.duration) {
+      const bufferedEnd = video.buffered.end(video.buffered.length - 1)
+      setBufferedPercent((bufferedEnd / video.duration) * 100)
+    }
+  }, [])
+
+  const handleWaiting = useCallback(() => {
+    setIsBuffering(true)
+    setShowControls(true)
+  }, [])
+
+  const handlePlaying = useCallback(() => {
+    setIsBuffering(false)
+    setIsPlaying(true)
+  }, [])
+
+  const handlePause = useCallback(() => {
+    setIsPlaying(false)
   }, [])
 
   // Keyboard controls
@@ -221,36 +304,39 @@ export default function TVWatchPage() {
         return
       }
 
-      if (playState === 'main') {
+      if (playState === 'main' && mainVideoRef.current) {
         switch (e.key) {
           case ' ':
           case 'k':
           case 'Enter':
             e.preventDefault()
-            if (mainVideoRef.current) {
-              if (isPlaying) {
-                mainVideoRef.current.pause()
-              } else {
-                mainVideoRef.current.play()
-              }
-              setIsPlaying(!isPlaying)
+            if (isPlaying) {
+              mainVideoRef.current.pause()
+            } else {
+              mainVideoRef.current.play()
             }
             break
           case 'm':
-            setIsMuted((m) => !m)
-            if (mainVideoRef.current) {
-              mainVideoRef.current.muted = !isMuted
-            }
+            setIsMuted((m) => {
+              mainVideoRef.current!.muted = !m
+              return !m
+            })
             break
           case 'ArrowLeft':
-            if (mainVideoRef.current) {
-              mainVideoRef.current.currentTime -= 10
-            }
+            e.preventDefault()
+            mainVideoRef.current.currentTime = Math.max(0, mainVideoRef.current.currentTime - 15)
             break
           case 'ArrowRight':
-            if (mainVideoRef.current) {
-              mainVideoRef.current.currentTime += 10
-            }
+            e.preventDefault()
+            mainVideoRef.current.currentTime = Math.min(
+              mainVideoRef.current.duration || 0,
+              mainVideoRef.current.currentTime + 15
+            )
+            break
+          case 'Escape':
+          case 'Backspace':
+            e.preventDefault()
+            goBack()
             break
         }
       }
@@ -258,8 +344,9 @@ export default function TVWatchPage() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [playState, isPlaying, isMuted, showControlsTemporarily])
+  }, [playState, isPlaying, showControlsTemporarily, goBack])
 
+  // Control functions
   const togglePlayPause = () => {
     if (mainVideoRef.current) {
       if (isPlaying) {
@@ -267,21 +354,36 @@ export default function TVWatchPage() {
       } else {
         mainVideoRef.current.play()
       }
-      setIsPlaying(!isPlaying)
     }
   }
 
   const toggleMute = () => {
-    setIsMuted(!isMuted)
     if (mainVideoRef.current) {
       mainVideoRef.current.muted = !isMuted
+      setIsMuted(!isMuted)
     }
   }
 
+  const skipBackward = () => {
+    if (mainVideoRef.current) {
+      mainVideoRef.current.currentTime = Math.max(0, mainVideoRef.current.currentTime - 15)
+    }
+  }
+
+  const skipForward = () => {
+    if (mainVideoRef.current) {
+      mainVideoRef.current.currentTime = Math.min(
+        mainVideoRef.current.duration || 0,
+        mainVideoRef.current.currentTime + 15
+      )
+    }
+  }
+
+  // Render states
   if (playState === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-black">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white border-t-transparent" />
+        <Loader2 className="h-16 w-16 animate-spin text-accent" />
       </div>
     )
   }
@@ -315,12 +417,13 @@ export default function TVWatchPage() {
     <div
       className="relative min-h-screen bg-black overflow-hidden"
       onMouseMove={showControlsTemporarily}
+      onClick={showControlsTemporarily}
     >
       {/* Back button */}
       {showControls && (
         <button
           onClick={goBack}
-          className="absolute left-6 top-6 z-20 flex items-center gap-3 rounded-full bg-black/50 px-5 py-3 text-white transition-colors hover:bg-black/70"
+          className="absolute left-6 top-6 z-30 flex items-center gap-3 rounded-full bg-black/60 px-5 py-3 text-white transition-colors hover:bg-black/80"
         >
           <ArrowLeft className="h-6 w-6" />
           <span className="text-lg">Back</span>
@@ -331,22 +434,39 @@ export default function TVWatchPage() {
       {isPlayingIntro && showControls && (
         <button
           onClick={handleSkipIntro}
-          className="absolute right-6 bottom-32 z-20 flex items-center gap-3 rounded border-2 border-white/40 bg-black/80 px-6 py-3 text-white transition-all hover:bg-white hover:text-black"
+          className="absolute right-6 bottom-32 z-30 flex items-center gap-3 rounded border-2 border-white/40 bg-black/80 px-6 py-3 text-white transition-all hover:bg-white hover:text-black"
         >
           <span className="text-lg font-semibold">Skip Intro</span>
           <SkipForward className="h-5 w-5" />
         </button>
       )}
 
+      {/* Buffering indicator */}
+      {isBuffering && playState === 'main' && (
+        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/40">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-16 w-16 animate-spin text-white" />
+            <p className="text-lg text-white/80">Buffering...</p>
+          </div>
+        </div>
+      )}
+
       {/* Videos */}
       <div className="flex min-h-screen items-center justify-center">
+        {/* Intro video */}
         {introVideoUrl && (
           <video
             ref={introVideoRef}
             src={introVideoUrl}
             onEnded={handleIntroEnded}
-            autoPlay
+            onCanPlay={() => {
+              // Try to play when ready
+              if (playState === 'intro' && introVideoRef.current) {
+                introVideoRef.current.play().catch(console.error)
+              }
+            }}
             playsInline
+            preload="auto"
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
             style={{
               opacity: showIntroVideo ? 1 : 0,
@@ -356,13 +476,20 @@ export default function TVWatchPage() {
           />
         )}
 
+        {/* Main video */}
         {mainVideoUrl && (
           <video
             ref={mainVideoRef}
             src={mainVideoUrl}
             playsInline
-            preload="metadata"
+            preload="auto"
             onTimeUpdate={handleTimeUpdate}
+            onDurationChange={handleDurationChange}
+            onProgress={handleProgress}
+            onWaiting={handleWaiting}
+            onPlaying={handlePlaying}
+            onPause={handlePause}
+            onCanPlay={() => setIsBuffering(false)}
             muted={isMuted}
             className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
             style={{
@@ -377,56 +504,99 @@ export default function TVWatchPage() {
       {/* TV-optimized controls */}
       {showControls && playState === 'main' && (
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent pt-24 pb-8 px-8 z-20">
-          {/* Progress bar */}
-          <div className="w-full h-2 bg-white/20 rounded-full mb-6 overflow-hidden">
+          {/* Progress bar with buffer indicator */}
+          <div className="relative w-full h-2 bg-white/20 rounded-full mb-4 overflow-hidden">
+            {/* Buffered progress */}
             <div
-              className="h-full bg-accent transition-all duration-100"
+              className="absolute h-full bg-white/30 transition-all duration-300"
+              style={{ width: `${bufferedPercent}%` }}
+            />
+            {/* Playback progress */}
+            <div
+              className="absolute h-full bg-accent transition-all duration-100"
               style={{ width: `${progress}%` }}
             />
           </div>
 
+          {/* Time display */}
+          <div className="flex justify-between text-sm text-white/60 mb-4">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+
           {/* Title and controls */}
           <div className="flex items-center justify-between">
-            <div>
+            <div className="flex-1">
               <h1 className="text-3xl tv:text-4xl font-bold text-white">
                 {clip.title}
               </h1>
               {clip.description && (
-                <p className="mt-2 text-lg text-white/60 max-w-2xl">
+                <p className="mt-2 text-lg text-white/60 max-w-2xl line-clamp-2">
                   {clip.description}
                 </p>
               )}
             </div>
 
-            <div className="flex items-center gap-4">
+            {/* Control buttons */}
+            <div className="flex items-center gap-3">
+              {/* Skip back 15s */}
+              <TVControlButton
+                id="skip-back"
+                onClick={skipBackward}
+                label="Skip back 15 seconds"
+                row={1}
+                col={0}
+              >
+                <div className="relative">
+                  <RotateCcw size={28} />
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-bold">15</span>
+                </div>
+              </TVControlButton>
+
+              {/* Play/Pause */}
               <TVControlButton
                 id="play-pause"
                 onClick={togglePlayPause}
                 label={isPlaying ? 'Pause' : 'Play'}
                 row={1}
-                col={0}
+                col={1}
               >
-                {isPlaying ? <Pause size={32} /> : <Play size={32} />}
+                {isPlaying ? <Pause size={32} /> : <Play size={32} className="ml-1" />}
               </TVControlButton>
 
+              {/* Skip forward 15s */}
+              <TVControlButton
+                id="skip-forward"
+                onClick={skipForward}
+                label="Skip forward 15 seconds"
+                row={1}
+                col={2}
+              >
+                <div className="relative">
+                  <RotateCw size={28} />
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-bold">15</span>
+                </div>
+              </TVControlButton>
+
+              {/* Mute */}
               <TVControlButton
                 id="mute"
                 onClick={toggleMute}
                 label={isMuted ? 'Unmute' : 'Mute'}
                 row={1}
-                col={1}
+                col={3}
               >
-                {isMuted ? <VolumeX size={32} /> : <Volume2 size={32} />}
+                {isMuted ? <VolumeX size={28} /> : <Volume2 size={28} />}
               </TVControlButton>
             </div>
           </div>
 
           {/* Keyboard hints */}
-          <div className="mt-4 flex gap-6 text-sm text-white/40">
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-white/40">
             <span>Space/Enter: Play/Pause</span>
-            <span>Left/Right: Seek 10s</span>
+            <span>←/→: Skip 15s</span>
             <span>M: Mute</span>
-            <span>Back: Exit</span>
+            <span>Back/Esc: Exit</span>
           </div>
         </div>
       )}
