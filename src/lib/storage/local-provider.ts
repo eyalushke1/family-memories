@@ -28,6 +28,12 @@ export class LocalStorageProvider implements StorageProvider {
     return `/api/media/files/${storagePath}`
   }
 
+  async getUploadUrl(): Promise<string> {
+    // Local storage doesn't support presigned uploads
+    // Return empty string to indicate client should use regular upload
+    return ''
+  }
+
   getPublicUrl(storagePath: string): string {
     return `/api/media/files/${storagePath}`
   }

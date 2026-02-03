@@ -34,25 +34,39 @@ function getContentType(filename: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  const err = checkSupabase()
-  if (err) return err
+  try {
+    const err = checkSupabase()
+    if (err) return err
 
-  const formData = await request.formData()
-  const file = formData.get('file') as File | null
-  const type = formData.get('type') as UploadType | null
-  const id = formData.get('id') as string | null
+    let formData: FormData
+    try {
+      formData = await request.formData()
+    } catch (e) {
+      console.error('Failed to parse form data:', e)
+      return errorResponse('Failed to parse upload data. File may be too large.', 413)
+    }
 
-  if (!file) {
-    return errorResponse('File is required', 400)
-  }
+    const file = formData.get('file') as File | null
+    const type = formData.get('type') as UploadType | null
+    const id = formData.get('id') as string | null
 
-  if (!type) {
-    return errorResponse('Type is required (avatar, video, thumbnail, animated-thumbnail)', 400)
-  }
+    if (!file) {
+      return errorResponse('File is required', 400)
+    }
 
-  if (!id) {
-    return errorResponse('ID is required (profile id for avatar, clip id for others)', 400)
-  }
+    if (!type) {
+      return errorResponse('Type is required (avatar, video, thumbnail, animated-thumbnail)', 400)
+    }
+
+    if (!id) {
+      return errorResponse('ID is required (profile id for avatar, clip id for others)', 400)
+    }
+
+    // Check file size - warn for very large files
+    const maxSizeBytes = 500 * 1024 * 1024 // 500MB
+    if (file.size > maxSizeBytes) {
+      return errorResponse('File too large. Maximum size is 500MB.', 413)
+    }
 
   // Validate file type
   const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
@@ -159,4 +173,12 @@ export async function POST(request: NextRequest) {
     size: buffer.length,
     contentType,
   }, 201)
+  } catch (error) {
+    console.error('Upload error:', error)
+    const message = error instanceof Error ? error.message : 'Upload failed'
+    if (message.includes('memory') || message.includes('heap')) {
+      return errorResponse('File too large to process. Please use a smaller file or compress the video.', 413)
+    }
+    return errorResponse(message, 500)
+  }
 }

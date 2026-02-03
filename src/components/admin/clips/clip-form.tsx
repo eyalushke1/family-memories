@@ -125,7 +125,89 @@ export function ClipForm({
     }
   }
 
-  const uploadFile = async (
+  // Direct upload to storage using presigned URL (for large files)
+  const uploadDirect = async (
+    file: File,
+    type: 'video' | 'thumbnail',
+    clipId: string,
+    onProgress?: (progress: number) => void
+  ): Promise<string> => {
+    // Get presigned upload URL
+    const urlRes = await fetch('/api/admin/upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        id: clipId,
+        filename: file.name,
+        size: file.size,
+      }),
+    })
+
+    const urlData = await urlRes.json()
+    if (!urlData.success) {
+      throw new Error(urlData.error || 'Failed to get upload URL')
+    }
+
+    const { uploadUrl, storagePath, contentType } = urlData.data
+
+    // Upload directly to storage
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable && onProgress) {
+          const progress = (event.loaded / event.total) * 100
+          onProgress(progress)
+        }
+      })
+
+      xhr.addEventListener('load', async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // Confirm upload and update database
+          try {
+            const confirmRes = await fetch('/api/admin/upload-url', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type,
+                id: clipId,
+                storagePath,
+                filename: file.name,
+                size: file.size,
+              }),
+            })
+            const confirmData = await confirmRes.json()
+            if (confirmData.success) {
+              resolve(storagePath)
+            } else {
+              reject(new Error(confirmData.error || 'Failed to confirm upload'))
+            }
+          } catch {
+            reject(new Error('Failed to confirm upload'))
+          }
+        } else {
+          reject(new Error(`Direct upload failed with status ${xhr.status}`))
+        }
+      })
+
+      xhr.addEventListener('error', () => {
+        reject(new Error('Network error during direct upload'))
+      })
+
+      xhr.addEventListener('timeout', () => {
+        reject(new Error('Direct upload timed out'))
+      })
+
+      xhr.open('PUT', uploadUrl)
+      xhr.setRequestHeader('Content-Type', contentType)
+      xhr.timeout = 600000 // 10 minutes for large files
+      xhr.send(file)
+    })
+  }
+
+  // Regular upload through server (for smaller files)
+  const uploadViaServer = async (
     file: File,
     type: 'video' | 'thumbnail',
     clipId: string,
@@ -147,25 +229,40 @@ export function ClipForm({
       })
 
       xhr.addEventListener('load', () => {
+        const responseText = xhr.responseText
+        const isHtmlResponse = responseText.trim().startsWith('<') || responseText.includes('<!DOCTYPE')
+
         if (xhr.status >= 200 && xhr.status < 300) {
+          if (isHtmlResponse) {
+            reject(new Error('Server returned an unexpected response. The file may be too large.'))
+            return
+          }
           try {
-            const data = JSON.parse(xhr.responseText)
+            const data = JSON.parse(responseText)
             if (data.success) {
               resolve(data.data.path)
             } else {
               reject(new Error(data.error || `Failed to upload ${type}`))
             }
           } catch {
-            reject(new Error('Invalid response from server'))
+            reject(new Error('Invalid response from server. Please try again.'))
           }
         } else if (xhr.status === 413) {
-          reject(new Error('File too large. Maximum upload size is 32MB. Please compress the video or use a smaller file.'))
+          reject(new Error('File too large. Maximum upload size is 500MB. Please compress the video.'))
+        } else if (xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
+          reject(new Error('Server timeout or unavailable. The file may be too large to process. Please try a smaller file.'))
+        } else if (xhr.status === 0) {
+          reject(new Error('Connection lost during upload. Please check your network and try again.'))
         } else {
+          if (isHtmlResponse) {
+            reject(new Error(`Upload failed (${xhr.status}). The server may be overloaded or the file too large.`))
+            return
+          }
           try {
-            const data = JSON.parse(xhr.responseText)
+            const data = JSON.parse(responseText)
             reject(new Error(data.error || `Upload failed with status ${xhr.status}`))
           } catch {
-            reject(new Error(`Upload failed with status ${xhr.status}`))
+            reject(new Error(`Upload failed with status ${xhr.status}. Please try again.`))
           }
         }
       })
@@ -182,6 +279,28 @@ export function ClipForm({
       xhr.timeout = 300000 // 5 minutes
       xhr.send(formData)
     })
+  }
+
+  // Main upload function - uses direct upload for large files
+  const uploadFile = async (
+    file: File,
+    type: 'video' | 'thumbnail',
+    clipId: string,
+    onProgress?: (progress: number) => void
+  ): Promise<string> => {
+    const DIRECT_UPLOAD_THRESHOLD = 50 * 1024 * 1024 // 50MB
+
+    if (file.size > DIRECT_UPLOAD_THRESHOLD) {
+      try {
+        return await uploadDirect(file, type, clipId, onProgress)
+      } catch (error) {
+        // If direct upload fails (e.g., local dev), fall back to server upload
+        console.warn('Direct upload failed, trying server upload:', error)
+        return await uploadViaServer(file, type, clipId, onProgress)
+      }
+    }
+
+    return await uploadViaServer(file, type, clipId, onProgress)
   }
 
   const saveProfileAssociations = async (clipId: string) => {

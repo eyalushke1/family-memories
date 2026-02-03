@@ -91,6 +91,15 @@ export class ZadaraStorageProvider implements StorageProvider {
     return s3GetSignedUrl(this.client, command, { expiresIn: expiresInSeconds })
   }
 
+  async getUploadUrl(path: string, contentType: string, expiresInSeconds = 3600): Promise<string> {
+    const command = new PutObjectCommand({
+      Bucket: this.config.bucketName,
+      Key: path,
+      ContentType: contentType,
+    })
+    return s3GetSignedUrl(this.client, command, { expiresIn: expiresInSeconds })
+  }
+
   getPublicUrl(path: string): string {
     return `${this.config.publicUrl}/${path}`
   }
