@@ -84,6 +84,7 @@ export default function TVWatchPage() {
   const stallRecoveryRef = useRef<NodeJS.Timeout | null>(null)
   const lastTimeRef = useRef<number>(0)
   const stallCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const introPlayAttemptedRef = useRef(false)
 
   const { goBack } = useTVNavigation()
 
@@ -213,88 +214,115 @@ export default function TVWatchPage() {
 
   // Intro video playback with LG TV compatibility
   useEffect(() => {
-    if (playState !== 'intro' || !introVideoRef.current) return
+    if (playState !== 'intro' || !introVideoRef.current || !introClip) return
 
     const video = introVideoRef.current
+    const introUrl = `/api/media/files/${introClip.video_path}`
+
+    console.log('[TV Player] Setting up intro video')
+    console.log('[TV Player] Intro URL:', introUrl)
+    console.log('[TV Player] Video readyState:', video.readyState)
+
+    // Reset state
+    introPlayAttemptedRef.current = false
     setIntroLoading(true)
     setIntroError(false)
 
     const attemptPlay = async () => {
-      console.log('[TV Player] Attempting to play intro')
+      // Only attempt once per setup
+      if (introPlayAttemptedRef.current) return
+      introPlayAttemptedRef.current = true
+
+      console.log('[TV Player] Attempting to play intro, readyState:', video.readyState)
+
       try {
-        // Start muted for better autoplay compatibility on Smart TVs
+        // ALWAYS start muted for LG TV autoplay compatibility
         video.muted = true
-        await video.play()
-        // If successful, try to unmute
-        video.muted = false
-        setIsMuted(false)
-        console.log('[TV Player] Intro playing')
-        setIntroLoading(false)
-      } catch (err) {
-        console.warn('[TV Player] Intro play failed:', err)
-        // Keep it muted and try again
-        try {
-          video.muted = true
-          setIsMuted(true)
-          await video.play()
-          console.log('[TV Player] Intro playing (muted)')
-          setIntroLoading(false)
-        } catch (err2) {
-          console.error('[TV Player] Intro completely failed:', err2)
-          setIntroError(true)
-          setIntroLoading(false)
-          // Skip to main after delay
-          setTimeout(() => transitionToMain(), 1500)
+        video.volume = 1
+
+        const playPromise = video.play()
+        if (playPromise) {
+          await playPromise
         }
+
+        console.log('[TV Player] Intro playing (muted), trying to unmute...')
+        setIntroLoading(false)
+
+        // Wait a moment then try to unmute
+        setTimeout(() => {
+          if (video && !video.paused) {
+            video.muted = false
+            setIsMuted(false)
+            console.log('[TV Player] Intro unmuted successfully')
+          }
+        }, 500)
+      } catch (err) {
+        console.error('[TV Player] Intro play failed:', err)
+        setIntroError(true)
+        setIntroLoading(false)
+        // Skip to main after brief delay
+        setTimeout(() => transitionToMain(), 1000)
       }
     }
 
-    // Wait for metadata to be loaded
-    const handleLoadedMetadata = () => {
-      console.log('[TV Player] Intro metadata loaded, duration:', video.duration)
+    const handleLoadedData = () => {
+      console.log('[TV Player] Intro loadeddata event, duration:', video.duration)
       attemptPlay()
     }
 
     const handleCanPlay = () => {
-      if (introLoading) {
-        console.log('[TV Player] Intro can play')
-        attemptPlay()
-      }
+      console.log('[TV Player] Intro canplay event')
+      attemptPlay()
     }
 
-    const handleError = () => {
-      console.error('[TV Player] Intro error')
+    const handleError = (e: Event) => {
+      const videoEl = e.target as HTMLVideoElement
+      console.error('[TV Player] Intro error event:', videoEl.error?.code, videoEl.error?.message)
       setIntroError(true)
       setIntroLoading(false)
       setTimeout(() => transitionToMain(), 500)
     }
 
-    // Check if already ready
-    if (video.readyState >= 1) {
-      attemptPlay()
-    } else {
-      video.addEventListener('loadedmetadata', handleLoadedMetadata)
-      video.addEventListener('canplay', handleCanPlay)
+    const handleStalled = () => {
+      console.warn('[TV Player] Intro video stalled')
     }
-    video.addEventListener('error', handleError)
 
-    // Timeout failsafe
+    const handleWaiting = () => {
+      console.log('[TV Player] Intro video waiting/buffering')
+    }
+
+    // Add all event listeners
+    video.addEventListener('loadeddata', handleLoadedData)
+    video.addEventListener('canplay', handleCanPlay)
+    video.addEventListener('error', handleError)
+    video.addEventListener('stalled', handleStalled)
+    video.addEventListener('waiting', handleWaiting)
+
+    // If video is already ready, try to play
+    if (video.readyState >= 2) {
+      console.log('[TV Player] Intro already ready, attempting play')
+      attemptPlay()
+    }
+
+    // Timeout failsafe - 6 seconds
     const timeout = setTimeout(() => {
-      if (introLoading) {
-        console.warn('[TV Player] Intro load timeout')
+      if (introLoading && !introPlayAttemptedRef.current) {
+        console.warn('[TV Player] Intro load timeout - skipping to main')
         setIntroError(true)
         setIntroLoading(false)
         transitionToMain()
       }
-    }, 8000)
+    }, 6000)
 
     return () => {
       clearTimeout(timeout)
-      video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      video.removeEventListener('loadeddata', handleLoadedData)
       video.removeEventListener('canplay', handleCanPlay)
       video.removeEventListener('error', handleError)
+      video.removeEventListener('stalled', handleStalled)
+      video.removeEventListener('waiting', handleWaiting)
     }
-  }, [playState, introLoading, transitionToMain])
+  }, [playState, introClip, transitionToMain])
 
   // Main video autoplay (when no intro)
   useEffect(() => {
