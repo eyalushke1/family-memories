@@ -3,7 +3,7 @@ import { getStorage } from '@/lib/storage'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const CONTENT_TYPES: Record<string, string> = {
   // Images
@@ -37,10 +37,87 @@ function isStreamingType(contentType: string): boolean {
   return contentType.startsWith('video/') || contentType.startsWith('audio/')
 }
 
-// Chunk size for range requests - 10MB for better LG TV compatibility
+// Chunk size when browser sends open-ended range (e.g. bytes=0-)
 const RANGE_CHUNK_SIZE = 10 * 1024 * 1024
-// Max file size to load fully into memory (50MB)
-const MAX_FULL_LOAD_SIZE = 50 * 1024 * 1024
+
+/**
+ * Parse Range header into start/end bytes.
+ * Supports:
+ *   bytes=0-999     (standard range)
+ *   bytes=0-        (open-ended, from start)
+ *   bytes=-500      (suffix range, last 500 bytes - needed for MP4 moov atom)
+ */
+function parseRange(rangeHeader: string, totalSize: number): { start: number; end: number } | null {
+  // Suffix range: bytes=-N (last N bytes)
+  const suffixMatch = rangeHeader.match(/bytes=-(\d+)/)
+  if (suffixMatch && !rangeHeader.match(/bytes=\d/)) {
+    const suffix = parseInt(suffixMatch[1], 10)
+    const start = Math.max(0, totalSize - suffix)
+    return { start, end: totalSize - 1 }
+  }
+
+  // Standard range: bytes=N-M or bytes=N-
+  const standardMatch = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+  if (standardMatch) {
+    const start = parseInt(standardMatch[1], 10)
+    const requestedEnd = standardMatch[2] ? parseInt(standardMatch[2], 10) : undefined
+
+    // If no end specified, serve a chunk (not the entire remaining file)
+    const end = requestedEnd !== undefined
+      ? Math.min(requestedEnd, totalSize - 1)
+      : Math.min(start + RANGE_CHUNK_SIZE - 1, totalSize - 1)
+
+    return { start, end }
+  }
+
+  return null
+}
+
+/**
+ * HEAD - Returns metadata without body.
+ * Some Smart TV browsers (LG WebOS) send HEAD before GET.
+ */
+export async function HEAD(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathSegments } = await params
+  const storagePath = pathSegments.join('/')
+
+  if (!storagePath) {
+    return new NextResponse(null, { status: 400 })
+  }
+
+  try {
+    const storage = getStorage()
+    const contentType = getContentType(storagePath)
+
+    if (isStreamingType(contentType)) {
+      const metadata = await storage.getMetadata(storagePath)
+      return new NextResponse(null, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(metadata.size),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=604800',
+        },
+      })
+    }
+
+    const metadata = await storage.getMetadata(storagePath)
+    return new NextResponse(null, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': String(metadata.size),
+        'Accept-Ranges': 'bytes',
+      },
+    })
+  } catch {
+    return new NextResponse(null, { status: 404 })
+  }
+}
 
 export async function GET(
   request: NextRequest,
@@ -58,28 +135,18 @@ export async function GET(
     const contentType = getContentType(storagePath)
     const rangeHeader = request.headers.get('range')
 
-    // For video/audio files, handle range requests for streaming
+    // For video/audio files, handle range-based streaming
     if (isStreamingType(contentType)) {
-      // Get file metadata
       const metadata = await storage.getMetadata(storagePath)
       const totalSize = metadata.size
 
-      // Handle range request (browser requesting specific bytes)
+      // Handle Range request
       if (rangeHeader) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-        if (match) {
-          const start = parseInt(match[1], 10)
-          const requestedEnd = match[2] ? parseInt(match[2], 10) : undefined
-
-          // If end not specified, return a chunk of RANGE_CHUNK_SIZE
-          // If end specified, honor the request (but cap at file size)
-          const end = requestedEnd !== undefined
-            ? Math.min(requestedEnd, totalSize - 1)
-            : Math.min(start + RANGE_CHUNK_SIZE - 1, totalSize - 1)
-
+        const range = parseRange(rangeHeader, totalSize)
+        if (range) {
+          const { start, end } = range
           const chunkSize = end - start + 1
 
-          // Download the requested range
           const data = await storage.downloadRange(storagePath, start, end)
 
           return new NextResponse(new Uint8Array(data), {
@@ -95,46 +162,12 @@ export async function GET(
         }
       }
 
-      // No range header - return full file with proper headers
-      // This is critical for LG TV compatibility - must return 200, not 206
-      // The browser will then make range requests if needed
+      // No Range header - return full file as 200
+      // Critical for LG TV: must be 200, NOT 206
+      // Browser will see Accept-Ranges and make range requests as needed
+      const data = await storage.download(storagePath)
 
-      if (totalSize <= MAX_FULL_LOAD_SIZE) {
-        // File small enough to load fully - return complete file
-        const data = await storage.download(storagePath)
-        return new NextResponse(new Uint8Array(data), {
-          status: 200,
-          headers: {
-            'Content-Type': contentType,
-            'Content-Length': String(totalSize),
-            'Accept-Ranges': 'bytes',
-            'Cache-Control': 'public, max-age=604800',
-          },
-        })
-      }
-
-      // Large file - stream it in chunks using ReadableStream
-      // This allows us to return 200 status with full Content-Length
-      const stream = new ReadableStream({
-        async start(controller) {
-          let offset = 0
-          const chunkSize = RANGE_CHUNK_SIZE
-
-          try {
-            while (offset < totalSize) {
-              const end = Math.min(offset + chunkSize - 1, totalSize - 1)
-              const chunk = await storage.downloadRange(storagePath, offset, end)
-              controller.enqueue(new Uint8Array(chunk))
-              offset = end + 1
-            }
-            controller.close()
-          } catch (error) {
-            controller.error(error)
-          }
-        },
-      })
-
-      return new NextResponse(stream, {
+      return new NextResponse(new Uint8Array(data), {
         status: 200,
         headers: {
           'Content-Type': contentType,

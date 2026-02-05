@@ -3,7 +3,7 @@ import { getStorage } from '@/lib/storage'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const CONTENT_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
@@ -32,21 +32,78 @@ function isStreamingType(contentType: string): boolean {
 
 function addCorsHeaders(headers: Headers): Headers {
   headers.set('Access-Control-Allow-Origin', '*')
-  headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  headers.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
   headers.set('Access-Control-Allow-Headers', 'Range, Content-Type')
   headers.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges')
   return headers
 }
 
-// Chunk size for range requests - 10MB for better LG TV compatibility
+// Chunk size when browser sends open-ended range
 const RANGE_CHUNK_SIZE = 10 * 1024 * 1024
-// Max file size to load fully into memory (50MB)
-const MAX_FULL_LOAD_SIZE = 50 * 1024 * 1024
+
+/**
+ * Parse Range header - supports standard and suffix ranges.
+ * Suffix range (bytes=-N) is critical for MP4 moov atom at end of file.
+ */
+function parseRange(rangeHeader: string, totalSize: number): { start: number; end: number } | null {
+  // Suffix range: bytes=-N (last N bytes)
+  const suffixMatch = rangeHeader.match(/bytes=-(\d+)/)
+  if (suffixMatch && !rangeHeader.match(/bytes=\d/)) {
+    const suffix = parseInt(suffixMatch[1], 10)
+    const start = Math.max(0, totalSize - suffix)
+    return { start, end: totalSize - 1 }
+  }
+
+  // Standard range: bytes=N-M or bytes=N-
+  const standardMatch = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+  if (standardMatch) {
+    const start = parseInt(standardMatch[1], 10)
+    const requestedEnd = standardMatch[2] ? parseInt(standardMatch[2], 10) : undefined
+
+    const end = requestedEnd !== undefined
+      ? Math.min(requestedEnd, totalSize - 1)
+      : Math.min(start + RANGE_CHUNK_SIZE - 1, totalSize - 1)
+
+    return { start, end }
+  }
+
+  return null
+}
 
 export async function OPTIONS() {
   const headers = new Headers()
   addCorsHeaders(headers)
   return new NextResponse(null, { status: 204, headers })
+}
+
+export async function HEAD(
+  _request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const { path: pathSegments } = await params
+  const storagePath = pathSegments.join('/')
+
+  if (!storagePath) {
+    return new NextResponse(null, { status: 400 })
+  }
+
+  try {
+    const storage = getStorage()
+    const contentType = getContentType(storagePath)
+    const metadata = await storage.getMetadata(storagePath)
+
+    const headers = new Headers({
+      'Content-Type': contentType,
+      'Content-Length': String(metadata.size),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=604800',
+    })
+    addCorsHeaders(headers)
+
+    return new NextResponse(null, { status: 200, headers })
+  } catch {
+    return new NextResponse(null, { status: 404 })
+  }
 }
 
 export async function GET(
@@ -65,27 +122,17 @@ export async function GET(
     const contentType = getContentType(storagePath)
     const rangeHeader = request.headers.get('range')
 
-    // For video/audio files, handle range requests for streaming
     if (isStreamingType(contentType)) {
-      // Get file metadata
       const metadata = await storage.getMetadata(storagePath)
       const totalSize = metadata.size
 
-      // Handle range request (browser requesting specific bytes)
+      // Handle Range request
       if (rangeHeader) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-        if (match) {
-          const start = parseInt(match[1], 10)
-          const requestedEnd = match[2] ? parseInt(match[2], 10) : undefined
-
-          // If end not specified, return a chunk of RANGE_CHUNK_SIZE
-          const end = requestedEnd !== undefined
-            ? Math.min(requestedEnd, totalSize - 1)
-            : Math.min(start + RANGE_CHUNK_SIZE - 1, totalSize - 1)
-
+        const range = parseRange(rangeHeader, totalSize)
+        if (range) {
+          const { start, end } = range
           const chunkSize = end - start + 1
 
-          // Download the requested range
           const data = await storage.downloadRange(storagePath, start, end)
 
           const headers = new Headers({
@@ -97,48 +144,12 @@ export async function GET(
           })
           addCorsHeaders(headers)
 
-          return new NextResponse(new Uint8Array(data), {
-            status: 206,
-            headers,
-          })
+          return new NextResponse(new Uint8Array(data), { status: 206, headers })
         }
       }
 
-      // No range header - return full file with proper headers
-      // Critical for LG TV compatibility - must return 200, not 206
-
-      if (totalSize <= MAX_FULL_LOAD_SIZE) {
-        // File small enough to load fully
-        const data = await storage.download(storagePath)
-        const headers = new Headers({
-          'Content-Type': contentType,
-          'Content-Length': String(totalSize),
-          'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=604800',
-        })
-        addCorsHeaders(headers)
-        return new NextResponse(new Uint8Array(data), { status: 200, headers })
-      }
-
-      // Large file - stream it in chunks
-      const stream = new ReadableStream({
-        async start(controller) {
-          let offset = 0
-          const chunkSize = RANGE_CHUNK_SIZE
-
-          try {
-            while (offset < totalSize) {
-              const end = Math.min(offset + chunkSize - 1, totalSize - 1)
-              const chunk = await storage.downloadRange(storagePath, offset, end)
-              controller.enqueue(new Uint8Array(chunk))
-              offset = end + 1
-            }
-            controller.close()
-          } catch (error) {
-            controller.error(error)
-          }
-        },
-      })
+      // No Range header - return full file as 200
+      const data = await storage.download(storagePath)
 
       const headers = new Headers({
         'Content-Type': contentType,
@@ -148,7 +159,7 @@ export async function GET(
       })
       addCorsHeaders(headers)
 
-      return new NextResponse(stream, { status: 200, headers })
+      return new NextResponse(new Uint8Array(data), { status: 200, headers })
     }
 
     // Non-streaming files: return full content
