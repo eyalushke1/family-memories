@@ -66,7 +66,7 @@ export default function TVWatchPage() {
 
   // Video state
   const [isPlaying, setIsPlaying] = useState(false)
-  const [isMuted, setIsMuted] = useState(false)
+  const [isMuted, setIsMuted] = useState(true)
   const [volume, setVolume] = useState(1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -231,31 +231,8 @@ export default function TVWatchPage() {
         video.muted = true
         await video.play()
         console.log('[TV] Intro playing (muted)')
+        setIsMuted(true)
         setIntroReady(true)
-
-        // Delayed unmute - LG WebOS needs a moment
-        setTimeout(() => {
-          if (video && !video.paused && !video.ended) {
-            try {
-              video.muted = false
-              // Browser may synchronously pause when unmuting without user gesture
-              if (video.paused) {
-                console.log('[TV] Unmute caused pause, re-muting and resuming')
-                video.muted = true
-                setIsMuted(true)
-                video.play().catch(() => {})
-              } else {
-                setIsMuted(false)
-                console.log('[TV] Intro unmuted')
-              }
-            } catch {
-              console.warn('[TV] Unmute failed, staying muted')
-              video.muted = true
-              setIsMuted(true)
-              video.play().catch(() => {})
-            }
-          }
-        }, 800)
       } catch (err) {
         console.error('[TV] Intro play failed:', err)
         setIntroFailed(true)
@@ -345,14 +322,15 @@ export default function TVWatchPage() {
     const transitionStart = Date.now()
     console.log('[TV] Transitioning from intro to main')
     setPlayState('transitioning')
+    setIsBuffering(true)
 
-    // Stop and release intro video resources (critical for LG TV memory)
+    // Stop and release intro video resources (critical for LG TV — single decoder)
     const introVideo = introVideoRef.current
     if (introVideo) {
       introVideo.pause()
       introVideo.removeAttribute('src')
       introVideo.load() // Forces release of video decoder resources
-      console.log('[TV] Intro resources released')
+      console.log('[TV] Intro decoder released')
     }
 
     if (presentationData) {
@@ -360,53 +338,42 @@ export default function TVWatchPage() {
       return
     }
 
-    // Prepare and start main video
-    const mainVideo = mainVideoRef.current
-    if (mainVideo) {
-      // LG WebOS: set preload to auto and call load() to start buffering
+    // Wait for decoder to fully release before starting main video
+    // WebOS needs a frame to release the hardware decoder
+    setTimeout(() => {
+      const mainVideo = mainVideoRef.current
+      if (!mainVideo) {
+        setPlayState('main')
+        return
+      }
+
+      // React already set src via JSX (playState !== 'intro' now)
+      // DON'T call load() — it destroys buffer on WebOS
       mainVideo.preload = 'auto'
-      mainVideo.load()
-      console.log('[TV] Main video load() called')
 
       const startMain = async () => {
         const elapsed = Date.now() - transitionStart
         console.log(`[TV] Starting main video (transition took ${elapsed}ms)`)
         try {
-          // Start muted for autoplay reliability
           mainVideo.muted = true
-          mainVideo.currentTime = 0
           await mainVideo.play()
           console.log('[TV] Main video playing (muted)')
           setIsPlaying(true)
+          setIsMuted(true)
           setPlayState('main')
-
-          // Delayed unmute
-          setTimeout(() => {
-            if (mainVideo && !mainVideo.paused) {
-              mainVideo.muted = false
-              // Browser may synchronously pause when unmuting without user gesture
-              if (mainVideo.paused) {
-                console.log('[TV] Unmute caused pause, re-muting and resuming')
-                mainVideo.muted = true
-                setIsMuted(true)
-                mainVideo.play().catch(() => {})
-              } else {
-                setIsMuted(false)
-                console.log('[TV] Main video unmuted')
-              }
-            }
-          }, 500)
+          setIsBuffering(false)
         } catch (err) {
-          console.error('[TV] Main video play failed, trying muted:', err)
+          console.error('[TV] Main video play failed:', err)
           try {
             mainVideo.muted = true
-            setIsMuted(true)
             await mainVideo.play()
             setIsPlaying(true)
+            setIsMuted(true)
           } catch (err2) {
             console.error('[TV] Main video completely failed:', err2)
           }
           setPlayState('main')
+          setIsBuffering(false)
         }
       }
 
@@ -416,23 +383,26 @@ export default function TVWatchPage() {
       } else {
         const onReady = () => {
           mainVideo.removeEventListener('canplay', onReady)
+          mainVideo.removeEventListener('loadeddata', onReady)
+          clearTimeout(failsafeTimer)
           const elapsed = Date.now() - transitionStart
           console.log(`[TV] Main video ready (${elapsed}ms), readyState:`, mainVideo.readyState)
           startMain()
         }
         mainVideo.addEventListener('canplay', onReady)
+        mainVideo.addEventListener('loadeddata', onReady)
+
         // Failsafe: don't wait forever
-        setTimeout(() => {
+        const failsafeTimer = setTimeout(() => {
           if (playStateRef.current === 'transitioning') {
             console.warn('[TV] Main video canplay timeout, forcing start')
             mainVideo.removeEventListener('canplay', onReady)
+            mainVideo.removeEventListener('loadeddata', onReady)
             startMain()
           }
-        }, 6000)
+        }, 8000)
       }
-    } else {
-      setPlayState('main')
-    }
+    }, 100) // 100ms delay for decoder release
   }, [presentationData])
 
   // === MAIN VIDEO AUTOPLAY (when no intro) ===
@@ -442,9 +412,8 @@ export default function TVWatchPage() {
     const video = mainVideoRef.current
     console.log('[TV] Starting main video (no intro), readyState:', video.readyState)
 
-    // For LG WebOS: explicit load() + muted play
+    // Don't call video.load() — src is already set via JSX, let browser handle loading
     video.preload = 'auto'
-    video.load()
 
     const attemptPlay = async () => {
       try {
@@ -452,23 +421,8 @@ export default function TVWatchPage() {
         await video.play()
         console.log('[TV] Main video playing (muted, no intro)')
         setIsPlaying(true)
-
-        // Delayed unmute
-        setTimeout(() => {
-          if (video && !video.paused) {
-            video.muted = false
-            // Browser may synchronously pause when unmuting without user gesture
-            if (video.paused) {
-              console.log('[TV] Unmute caused pause, re-muting and resuming')
-              video.muted = true
-              setIsMuted(true)
-              video.play().catch(() => {})
-            } else {
-              setIsMuted(false)
-              console.log('[TV] Main video unmuted')
-            }
-          }
-        }, 500)
+        setIsMuted(true)
+        // Unmute button will appear — user must tap to unmute (user gesture required)
       } catch (err) {
         console.warn('[TV] Main autoplay failed:', err)
         try {
@@ -490,38 +444,47 @@ export default function TVWatchPage() {
     }
   }, [playState, introClip])
 
-  // === STALL DETECTION (LG TV specific) ===
+  // === STALL DETECTION (LG TV — no seeks, just pause/play) ===
+  // Shaka Player team confirmed that seeks (even small ones) flush the buffer on WebOS,
+  // causing infinite stall→seek→buffer-flush→stall loops.
   useEffect(() => {
     if (playState !== 'main' || !mainVideoRef.current) return
 
     const video = mainVideoRef.current
     lastTimeRef.current = video.currentTime
+    let recoveryAttempts = 0
 
-    // Check every 3 seconds if time is progressing
+    // Check every 5 seconds if time is progressing (longer interval for slow connections)
     stallCheckRef.current = setInterval(() => {
       if (video.paused || video.ended) return
 
       const now = video.currentTime
       const diff = now - lastTimeRef.current
 
-      // Less than 0.3s progress in 3s while supposedly playing = stalled
-      if (diff < 0.3 && now < (video.duration || Infinity) - 2) {
-        console.warn('[TV] Stall detected at', now.toFixed(1), 's')
+      if (diff > 0.3) {
+        // Video is progressing — reset recovery counter
+        recoveryAttempts = 0
+        setIsBuffering(false)
+      } else if (now < (video.duration || Infinity) - 2) {
+        // Stalled — show buffering but DON'T seek (it destroys buffer on WebOS)
+        console.warn('[TV] Stall detected at', now.toFixed(1), 's, recovery attempt', recoveryAttempts + 1)
         setIsBuffering(true)
 
-        // Recovery: small seek forward nudges the decoder
-        setTimeout(() => {
-          if (video && !video.paused && !video.ended) {
-            const target = Math.min(now + 0.1, (video.duration || Infinity) - 1)
-            video.currentTime = target
-            video.play().catch(() => {})
-            console.log('[TV] Stall recovery seek to', target.toFixed(1))
-          }
-        }, 1500)
+        if (recoveryAttempts < 3) {
+          recoveryAttempts++
+          // Gentle recovery: pause then play (no seek!) — gives decoder time to catch up
+          video.pause()
+          setTimeout(() => {
+            if (video && playStateRef.current === 'main') {
+              video.play().catch(() => {})
+            }
+          }, 500)
+        }
+        // After 3 attempts, just show buffering and let the browser handle it
       }
 
       lastTimeRef.current = now
-    }, 3000)
+    }, 5000)
 
     return () => {
       if (stallCheckRef.current) clearInterval(stallCheckRef.current)
@@ -864,6 +827,44 @@ export default function TVWatchPage() {
         </div>
       )}
 
+      {/* Unmute button — visible when video is muted, user must tap to unmute */}
+      {isMuted && playState === 'main' && !videoError && (
+        <button
+          onClick={() => {
+            const video = mainVideoRef.current
+            if (!video) return
+            video.muted = false
+            if (video.paused) {
+              video.play().then(() => setIsMuted(false)).catch(() => {
+                video.muted = true
+                video.play().catch(() => {})
+              })
+            } else {
+              setIsMuted(false)
+              console.log('[TV] Unmuted via user gesture')
+            }
+          }}
+          className="absolute left-6 bottom-40 flex items-center gap-3 rounded-full bg-black/70 px-5 py-3 text-white transition-all hover:bg-black/90 cursor-pointer"
+          style={{ zIndex: 25 }}
+        >
+          <VolumeX className="h-6 w-6" />
+          <span className="text-lg font-medium">Tap to unmute</span>
+        </button>
+      )}
+
+      {/* Transition loading overlay - z-25 */}
+      {playState === 'transitioning' && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-black"
+          style={{ zIndex: 25 }}
+        >
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-16 w-16 animate-spin text-accent" />
+            <p className="text-lg text-white/80">Starting video...</p>
+          </div>
+        </div>
+      )}
+
       {/* Buffering overlay - z-20 pointer-events-none */}
       {isBuffering && playState === 'main' && (
         <div
@@ -923,10 +924,11 @@ export default function TVWatchPage() {
       )}
 
       {/* Main video - z-10 when visible, z-1 when hidden */}
+      {/* Don't set src during intro — WebOS has a single hardware decoder */}
       {mainVideoUrl && (
         <video
           ref={mainVideoRef}
-          src={mainVideoUrl}
+          src={!introClip || playState !== 'intro' ? mainVideoUrl : undefined}
           playsInline
           webkit-playsinline="true"
           preload={introClip ? 'none' : 'auto'}

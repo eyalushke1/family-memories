@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, SkipForward, Loader2, Play } from 'lucide-react'
+import { ArrowLeft, SkipForward, Loader2, Play, VolumeX } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
@@ -56,6 +56,7 @@ export default function WatchPage() {
   const [introReady, setIntroReady] = useState(false)
   const [introFailed, setIntroFailed] = useState(false)
   const [needsUserPlay, setNeedsUserPlay] = useState(false)
+  const [isMuted, setIsMuted] = useState(true)
   // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -163,15 +164,13 @@ export default function WatchPage() {
   // === ROBUST PLAY FUNCTION ===
   // Handles all autoplay policies across browsers
   const attemptPlay = useCallback(async (video: HTMLVideoElement, allowUnmuted = false): Promise<boolean> => {
-    // Strategy 1: Try unmuted if allowed (works after user gesture on desktop)
-    if (allowUnmuted && !video.muted) {
+    // Strategy 1: Try unmuted if allowed (works after user gesture or high MEI)
+    if (allowUnmuted) {
       try {
-        const playPromise = video.play()
-        if (playPromise !== undefined) {
-          await playPromise
-          console.log('[Player] Unmuted play succeeded')
-          return true
-        }
+        video.muted = false
+        await video.play()
+        console.log('[Player] Unmuted play succeeded')
+        setIsMuted(false)
         return true
       } catch (err) {
         console.log('[Player] Unmuted play failed, trying muted:', (err as Error).name)
@@ -181,27 +180,26 @@ export default function WatchPage() {
     // Strategy 2: Play muted (works on all browsers)
     try {
       video.muted = true
-      const playPromise = video.play()
-      if (playPromise !== undefined) {
-        await playPromise
-      }
+      await video.play()
       console.log('[Player] Muted play succeeded')
+      setIsMuted(true)
 
-      // Strategy 3: Try to unmute after short delay (works on desktop)
+      // Strategy 3: Optimistic unmute probe (works when MEI is high or on TV browsers)
       setTimeout(() => {
         if (video && !video.paused && !video.ended) {
           try {
             video.muted = false
             // Browser may synchronously pause when unmuting without user gesture
             if (video.paused) {
-              console.log('[Player] Unmute caused pause, re-muting and resuming')
+              console.log('[Player] Unmute blocked by browser, staying muted')
               video.muted = true
               video.play().catch(() => {})
+              // isMuted stays true — unmute overlay will appear
             } else {
-              console.log('[Player] Unmuted after playing')
+              console.log('[Player] Auto-unmuted successfully (MEI/gesture)')
+              setIsMuted(false)
             }
           } catch {
-            // Stay muted - mobile browser policy
             video.muted = true
             video.play().catch(() => {})
           }
@@ -588,17 +586,59 @@ export default function WatchPage() {
     setNeedsUserPlay(false)
     setIsBuffering(true)
 
+    // User gesture context — unmute and play
+    video.muted = false
     video.play()
       .then(() => {
+        setIsMuted(false)
         setIsBuffering(false)
         startStallDetection(video)
       })
-      .catch((err) => {
-        console.error('[Player] User play failed:', err)
-        setVideoError('Unable to play video')
-        setIsBuffering(false)
+      .catch(() => {
+        // Try muted as last resort
+        video.muted = true
+        video.play()
+          .then(() => {
+            setIsMuted(true)
+            setIsBuffering(false)
+            startStallDetection(video)
+          })
+          .catch((err) => {
+            console.error('[Player] User play failed:', err)
+            setVideoError('Unable to play video')
+            setIsBuffering(false)
+          })
       })
   }, [startStallDetection])
+
+  // === UNMUTE HANDLER (requires user gesture) ===
+  const handleUnmute = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    video.muted = false
+    // We have user gesture context, so unmuting should work
+    if (video.paused) {
+      // Browser paused on unmute — play unmuted with gesture
+      video.play()
+        .then(() => setIsMuted(false))
+        .catch(() => {
+          video.muted = true
+          video.play().catch(() => {})
+        })
+    } else {
+      setIsMuted(false)
+      console.log('[Player] Unmuted via user gesture')
+    }
+  }, [])
+
+  // Sync muted state when user changes via native controls
+  const handleMainVolumeChange = useCallback(() => {
+    const video = mainVideoRef.current
+    if (video) {
+      setIsMuted(video.muted)
+    }
+  }, [])
 
   // === MAIN VIDEO EVENT HANDLERS ===
   const handleMainWaiting = useCallback(() => {
@@ -870,6 +910,18 @@ export default function WatchPage() {
         </div>
       )}
 
+      {/* Unmute button — shown when video is playing muted */}
+      {isMuted && playState === 'main' && !needsUserPlay && !videoError && (
+        <button
+          onClick={handleUnmute}
+          className="absolute left-4 bottom-24 flex items-center gap-2 rounded-full bg-black/70 px-4 py-2.5 text-white transition-all hover:bg-black/90 cursor-pointer"
+          style={{ zIndex: 25 }}
+        >
+          <VolumeX className="h-5 w-5" />
+          <span className="text-sm font-medium">Tap to unmute</span>
+        </button>
+      )}
+
       {/* Buffering overlay */}
       {isBuffering && playState === 'main' && !needsUserPlay && (
         <div
@@ -945,6 +997,7 @@ export default function WatchPage() {
           onError={handleMainError}
           onEnded={handleMainEnded}
           onStalled={handleMainStalled}
+          onVolumeChange={handleMainVolumeChange}
           className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
           style={{
             opacity: showMainVideo ? 1 : 0,
