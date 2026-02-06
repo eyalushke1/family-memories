@@ -56,8 +56,6 @@ export default function WatchPage() {
   const [introReady, setIntroReady] = useState(false)
   const [introFailed, setIntroFailed] = useState(false)
   const [needsUserPlay, setNeedsUserPlay] = useState(false)
-  const [retryCount, setRetryCount] = useState(0)
-
   // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -66,6 +64,7 @@ export default function WatchPage() {
   const lastTimeRef = useRef<number>(0)
   const lastTimeCheckRef = useRef<number>(Date.now())
   const playStateRef = useRef<PlayState>('loading')
+  const retryCountRef = useRef(0)
 
   // Keep ref in sync for use in async callbacks
   playStateRef.current = playState
@@ -232,7 +231,7 @@ export default function WatchPage() {
     lastTimeRef.current = video.currentTime
     lastTimeCheckRef.current = Date.now()
 
-    // Check every 2 seconds if video is progressing
+    // Check every 3 seconds if video is progressing
     stallCheckRef.current = setInterval(() => {
       if (video.paused || video.ended || playStateRef.current !== 'main') {
         return
@@ -243,29 +242,29 @@ export default function WatchPage() {
       const timeDiff = currentTime - lastTimeRef.current
       const realTimeDiff = (now - lastTimeCheckRef.current) / 1000
 
-      // If less than 0.5s of video progress in 2s of real time while not buffering
-      if (timeDiff < 0.5 && realTimeDiff >= 2 && !video.seeking) {
+      // If less than 0.5s of video progress in 3s of real time while not buffering
+      if (timeDiff < 0.5 && realTimeDiff >= 3 && !video.seeking) {
         // Check if we have buffered data ahead
         const hasBuffer = video.buffered.length > 0 &&
           video.buffered.end(video.buffered.length - 1) > currentTime + 1
 
         if (!hasBuffer && video.networkState === HTMLMediaElement.NETWORK_LOADING) {
           // Network is loading but no progress - stall detected
-          console.warn('[Player] Stall detected at', currentTime.toFixed(1), 's')
+          const attempt = retryCountRef.current + 1
+          console.warn('[Player] Stall detected at', currentTime.toFixed(1), 's, attempt', attempt)
           setIsBuffering(true)
 
-          if (retryCount < MAX_RETRIES) {
-            // Recovery: reload from current position
+          if (retryCountRef.current < MAX_RETRIES) {
+            retryCountRef.current = attempt
+            // Gentle recovery: small seek nudge to restart buffering (no video.load()!)
             setTimeout(() => {
               if (video && !video.paused && playStateRef.current === 'main') {
-                console.log('[Player] Attempting stall recovery, attempt', retryCount + 1)
-                const savedTime = video.currentTime
-                video.load()
-                video.currentTime = savedTime
+                console.log('[Player] Stall recovery: seek nudge, attempt', attempt)
+                // Seek to same position to kick the buffer without destroying it
+                video.currentTime = video.currentTime
                 video.play().catch(() => {
                   setVideoError('Playback stalled. Please try again.')
                 })
-                setRetryCount(prev => prev + 1)
               }
             }, 1000)
           } else {
@@ -276,8 +275,8 @@ export default function WatchPage() {
 
       lastTimeRef.current = currentTime
       lastTimeCheckRef.current = now
-    }, 2000)
-  }, [retryCount])
+    }, 3000)
+  }, [])
 
   // === INTRO VIDEO SETUP ===
   useEffect(() => {
@@ -424,7 +423,7 @@ export default function WatchPage() {
     const transitionStart = Date.now()
     console.log('[Player] Transitioning from intro to main')
     setPlayState('transitioning')
-    setRetryCount(0)
+    retryCountRef.current = 0
     // Don't show buffering spinner during transition — show a clean loading state instead
     setIsBuffering(false)
 
@@ -633,13 +632,13 @@ export default function WatchPage() {
 
   const handleMainProgress = useCallback(() => {
     // Reset retry count on successful progress
-    if (retryCount > 0) {
+    if (retryCountRef.current > 0) {
       const video = mainVideoRef.current
       if (video && video.buffered.length > 0) {
-        setRetryCount(0)
+        retryCountRef.current = 0
       }
     }
-  }, [retryCount])
+  }, [])
 
   const handleMainError = useCallback(() => {
     const video = mainVideoRef.current
@@ -670,7 +669,7 @@ export default function WatchPage() {
     console.log('[Player] User-initiated retry')
     setVideoError(null)
     setIsBuffering(true)
-    setRetryCount(0)
+    retryCountRef.current = 0
 
     const currentTime = video.currentTime
 
