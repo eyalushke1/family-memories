@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, SkipForward, Loader2 } from 'lucide-react'
+import { ArrowLeft, SkipForward, Loader2, Play } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
@@ -28,6 +28,14 @@ interface PresentationData {
   }[]
 }
 
+// MediaError codes for better error messages
+const MEDIA_ERROR_MESSAGES: Record<number, string> = {
+  1: 'Video loading aborted',
+  2: 'Network error while loading video',
+  3: 'Video decoding failed',
+  4: 'Video format not supported',
+}
+
 export default function WatchPage() {
   const router = useRouter()
   const params = useParams()
@@ -45,15 +53,23 @@ export default function WatchPage() {
   const [videoError, setVideoError] = useState<string | null>(null)
   const [introReady, setIntroReady] = useState(false)
   const [introFailed, setIntroFailed] = useState(false)
+  const [needsUserPlay, setNeedsUserPlay] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
 
   // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const stallCheckRef = useRef<NodeJS.Timeout | null>(null)
+  const lastTimeRef = useRef<number>(0)
+  const lastTimeCheckRef = useRef<number>(Date.now())
   const playStateRef = useRef<PlayState>('loading')
 
   // Keep ref in sync for use in async callbacks
   playStateRef.current = playState
+
+  // Max retries for stall recovery
+  const MAX_RETRIES = 3
 
   // Load clip data
   useEffect(() => {
@@ -108,13 +124,122 @@ export default function WatchPage() {
           setPlayState('error')
         }
       } catch (err) {
-        console.error('Failed to load clip:', err)
+        console.error('[Player] Failed to load clip:', err)
         setPlayState('error')
       }
     }
 
     loadClip()
   }, [clipId])
+
+  // === ROBUST PLAY FUNCTION ===
+  // Handles all autoplay policies across browsers
+  const attemptPlay = useCallback(async (video: HTMLVideoElement, allowUnmuted = false): Promise<boolean> => {
+    // Strategy 1: Try unmuted if allowed (works after user gesture on desktop)
+    if (allowUnmuted && !video.muted) {
+      try {
+        const playPromise = video.play()
+        if (playPromise !== undefined) {
+          await playPromise
+          console.log('[Player] Unmuted play succeeded')
+          return true
+        }
+        return true
+      } catch (err) {
+        console.log('[Player] Unmuted play failed, trying muted:', (err as Error).name)
+      }
+    }
+
+    // Strategy 2: Play muted (works on all browsers)
+    try {
+      video.muted = true
+      const playPromise = video.play()
+      if (playPromise !== undefined) {
+        await playPromise
+      }
+      console.log('[Player] Muted play succeeded')
+
+      // Strategy 3: Try to unmute after short delay (works on desktop)
+      setTimeout(() => {
+        if (video && !video.paused && !video.ended) {
+          try {
+            video.muted = false
+            console.log('[Player] Unmuted after playing')
+          } catch {
+            // Stay muted - mobile browser policy
+          }
+        }
+      }, 500)
+      return true
+    } catch (err) {
+      const error = err as DOMException
+      console.error('[Player] Play failed:', error.name, error.message)
+
+      if (error.name === 'NotAllowedError') {
+        // Autoplay completely blocked - show play button
+        setNeedsUserPlay(true)
+        return false
+      }
+      return false
+    }
+  }, [])
+
+  // === STALL DETECTION AND RECOVERY ===
+  const startStallDetection = useCallback((video: HTMLVideoElement) => {
+    // Clear any existing check
+    if (stallCheckRef.current) {
+      clearInterval(stallCheckRef.current)
+    }
+
+    lastTimeRef.current = video.currentTime
+    lastTimeCheckRef.current = Date.now()
+
+    // Check every 2 seconds if video is progressing
+    stallCheckRef.current = setInterval(() => {
+      if (video.paused || video.ended || playStateRef.current !== 'main') {
+        return
+      }
+
+      const now = Date.now()
+      const currentTime = video.currentTime
+      const timeDiff = currentTime - lastTimeRef.current
+      const realTimeDiff = (now - lastTimeCheckRef.current) / 1000
+
+      // If less than 0.5s of video progress in 2s of real time while not buffering
+      if (timeDiff < 0.5 && realTimeDiff >= 2 && !video.seeking) {
+        // Check if we have buffered data ahead
+        const hasBuffer = video.buffered.length > 0 &&
+          video.buffered.end(video.buffered.length - 1) > currentTime + 1
+
+        if (!hasBuffer && video.networkState === HTMLMediaElement.NETWORK_LOADING) {
+          // Network is loading but no progress - stall detected
+          console.warn('[Player] Stall detected at', currentTime.toFixed(1), 's')
+          setIsBuffering(true)
+
+          if (retryCount < MAX_RETRIES) {
+            // Recovery: reload from current position
+            setTimeout(() => {
+              if (video && !video.paused && playStateRef.current === 'main') {
+                console.log('[Player] Attempting stall recovery, attempt', retryCount + 1)
+                const savedTime = video.currentTime
+                video.load()
+                video.currentTime = savedTime
+                video.play().catch(() => {
+                  setVideoError('Playback stalled. Please try again.')
+                })
+                setRetryCount(prev => prev + 1)
+              }
+            }, 1000)
+          } else {
+            setVideoError('Video playback is having issues. Please check your connection.')
+          }
+        }
+      }
+
+      lastTimeRef.current = currentTime
+      lastTimeCheckRef.current = now
+    }, 2000)
+  }, [retryCount])
 
   // === INTRO VIDEO SETUP ===
   useEffect(() => {
@@ -124,11 +249,14 @@ export default function WatchPage() {
     if (!video) return
 
     const introUrl = `/api/media/files/${introClip.video_path}`
+    console.log('[Player] Setting up intro:', introUrl)
 
     setIntroReady(false)
     setIntroFailed(false)
 
+    // Configure video element
     video.muted = true
+    video.playsInline = true
     video.preload = 'auto'
     video.src = introUrl
     video.load()
@@ -139,53 +267,66 @@ export default function WatchPage() {
       if (playAttempted) return
       playAttempted = true
 
-      try {
-        video.muted = true
-        await video.play()
-        setIntroReady(true)
+      console.log('[Player] Intro ready, readyState:', video.readyState)
+      const success = await attemptPlay(video)
 
-        setTimeout(() => {
-          if (video && !video.paused && !video.ended) {
-            try {
-              video.muted = false
-            } catch {
-              // Stay muted on mobile
-            }
-          }
-        }, 600)
-      } catch (err) {
-        console.error('[Player] Intro play failed:', err)
+      if (success) {
+        setIntroReady(true)
+      } else {
         setIntroFailed(true)
       }
     }
 
-    const onCanPlay = () => tryPlay()
-    const onLoadedData = () => tryPlay()
-    const onError = () => {
-      setIntroFailed(true)
-    }
-
-    video.addEventListener('canplaythrough', onCanPlay)
-    video.addEventListener('loadeddata', onLoadedData)
-    video.addEventListener('error', onError)
-
-    if (video.readyState >= 3) {
+    // Use canplaythrough for more reliable playback
+    const onCanPlayThrough = () => {
+      console.log('[Player] Intro canplaythrough')
       tryPlay()
     }
 
+    const onLoadedData = () => {
+      console.log('[Player] Intro loadeddata')
+      // Give a moment for more buffering
+      setTimeout(() => {
+        if (!playAttempted) tryPlay()
+      }, 200)
+    }
+
+    const onError = () => {
+      const error = video.error
+      console.error('[Player] Intro error:', error?.code, error?.message)
+      setIntroFailed(true)
+    }
+
+    const onStalled = () => {
+      console.warn('[Player] Intro stalled')
+    }
+
+    video.addEventListener('canplaythrough', onCanPlayThrough)
+    video.addEventListener('loadeddata', onLoadedData)
+    video.addEventListener('error', onError)
+    video.addEventListener('stalled', onStalled)
+
+    // If already cached/ready
+    if (video.readyState >= 4) {
+      tryPlay()
+    }
+
+    // Failsafe: skip intro after 12s if it hasn't started
     const failsafe = setTimeout(() => {
       if (!playAttempted || video.paused) {
+        console.warn('[Player] Intro failsafe triggered')
         setIntroFailed(true)
       }
-    }, 10000)
+    }, 12000)
 
     return () => {
       clearTimeout(failsafe)
-      video.removeEventListener('canplaythrough', onCanPlay)
+      video.removeEventListener('canplaythrough', onCanPlayThrough)
       video.removeEventListener('loadeddata', onLoadedData)
       video.removeEventListener('error', onError)
+      video.removeEventListener('stalled', onStalled)
     }
-  }, [playState, introClip])
+  }, [playState, introClip, attemptPlay])
 
   // Auto-skip failed intro
   useEffect(() => {
@@ -205,12 +346,15 @@ export default function WatchPage() {
       if (playStateRef.current === 'main' || playStateRef.current === 'presentation') return
     }
 
+    console.log('[Player] Transitioning from intro to main')
     setPlayState('transitioning')
+    setRetryCount(0)
 
+    // Cleanup intro video properly (MDN best practice)
     const introVideo = introVideoRef.current
     if (introVideo) {
       introVideo.pause()
-      introVideo.removeAttribute('src')
+      introVideo.src = ''
       introVideo.load()
     }
 
@@ -221,102 +365,161 @@ export default function WatchPage() {
 
     const mainVideo = mainVideoRef.current
     if (mainVideo) {
+      // Start loading main video
       mainVideo.preload = 'auto'
       mainVideo.load()
 
       const startMain = async () => {
-        try {
-          mainVideo.muted = true
-          mainVideo.currentTime = 0
-          await mainVideo.play()
-          setPlayState('main')
+        const success = await attemptPlay(mainVideo)
+        setPlayState('main')
 
-          setTimeout(() => {
-            if (mainVideo && !mainVideo.paused) {
-              mainVideo.muted = false
-            }
-          }, 300)
-        } catch {
-          mainVideo.muted = true
-          mainVideo.play().catch(console.error)
-          setPlayState('main')
+        if (success) {
+          startStallDetection(mainVideo)
         }
       }
 
+      // Wait for video to be ready
       if (mainVideo.readyState >= 3) {
         startMain()
       } else {
-        mainVideo.addEventListener('canplay', startMain, { once: true })
+        const onCanPlay = () => {
+          mainVideo.removeEventListener('canplay', onCanPlay)
+          startMain()
+        }
+        mainVideo.addEventListener('canplay', onCanPlay)
+
+        // Failsafe
         setTimeout(() => {
           if (playStateRef.current === 'transitioning') {
+            console.warn('[Player] Main video canplay timeout')
+            mainVideo.removeEventListener('canplay', onCanPlay)
             startMain()
           }
-        }, 5000)
+        }, 8000)
       }
     } else {
       setPlayState('main')
     }
-  }, [presentationData])
+  }, [presentationData, attemptPlay, startStallDetection])
 
   // === MAIN VIDEO AUTOPLAY (when no intro) ===
   useEffect(() => {
     if (playState !== 'main' || introClip || !mainVideoRef.current) return
 
     const video = mainVideoRef.current
+    console.log('[Player] Starting main video (no intro)')
 
     video.preload = 'auto'
     video.load()
 
-    const attemptPlay = async () => {
-      try {
-        await video.play()
-      } catch {
-        try {
-          video.muted = true
-          await video.play()
-          setTimeout(() => {
-            if (video && !video.paused) {
-              video.muted = false
-            }
-          }, 300)
-        } catch {
-          // User will use native controls to play
-        }
+    const startPlayback = async () => {
+      // Try unmuted first (may work if user clicked to get here)
+      const success = await attemptPlay(video, true)
+
+      if (success) {
+        startStallDetection(video)
       }
     }
 
     if (video.readyState >= 3) {
-      attemptPlay()
+      startPlayback()
     } else {
-      video.addEventListener('canplay', () => attemptPlay(), { once: true })
+      video.addEventListener('canplay', () => startPlayback(), { once: true })
     }
-  }, [playState, introClip])
+  }, [playState, introClip, attemptPlay, startStallDetection])
+
+  // === USER-INITIATED PLAY ===
+  const handleUserPlay = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    setNeedsUserPlay(false)
+    setIsBuffering(true)
+
+    video.play()
+      .then(() => {
+        setIsBuffering(false)
+        startStallDetection(video)
+      })
+      .catch((err) => {
+        console.error('[Player] User play failed:', err)
+        setVideoError('Unable to play video')
+        setIsBuffering(false)
+      })
+  }, [startStallDetection])
 
   // === MAIN VIDEO EVENT HANDLERS ===
   const handleMainWaiting = useCallback(() => {
+    console.log('[Player] Video waiting/buffering')
     setIsBuffering(true)
   }, [])
 
   const handleMainPlaying = useCallback(() => {
+    console.log('[Player] Video playing')
     setIsBuffering(false)
     setVideoError(null)
+    setNeedsUserPlay(false)
   }, [])
 
   const handleMainCanPlayThrough = useCallback(() => {
     setIsBuffering(false)
   }, [])
 
+  const handleMainProgress = useCallback(() => {
+    // Reset retry count on successful progress
+    if (retryCount > 0) {
+      const video = mainVideoRef.current
+      if (video && video.buffered.length > 0) {
+        setRetryCount(0)
+      }
+    }
+  }, [retryCount])
+
   const handleMainError = useCallback(() => {
     const video = mainVideoRef.current
     if (video?.error) {
-      setVideoError(video.error.message || 'Playback error')
+      const errorCode = video.error.code
+      const errorMessage = MEDIA_ERROR_MESSAGES[errorCode] || video.error.message || 'Unknown playback error'
+      console.error('[Player] Video error:', errorCode, errorMessage)
+      setVideoError(errorMessage)
     }
     setIsBuffering(false)
   }, [])
 
   const handleMainEnded = useCallback(() => {
+    console.log('[Player] Video ended')
     router.push('/browse')
   }, [router])
+
+  const handleMainStalled = useCallback(() => {
+    console.warn('[Player] Video stalled event')
+    // Don't immediately show buffering - let stall detection handle it
+  }, [])
+
+  // === RETRY HANDLER ===
+  const handleRetry = useCallback(() => {
+    const video = mainVideoRef.current
+    if (!video) return
+
+    console.log('[Player] User-initiated retry')
+    setVideoError(null)
+    setIsBuffering(true)
+    setRetryCount(0)
+
+    const currentTime = video.currentTime
+
+    // Full reload
+    video.src = video.src
+    video.load()
+
+    video.addEventListener('canplay', () => {
+      video.currentTime = currentTime
+      video.play().catch(() => {
+        setVideoError('Playback failed. Please try again.')
+        setIsBuffering(false)
+      })
+    }, { once: true })
+  }, [])
 
   // Controls auto-hide
   const handleInteraction = useCallback(() => {
@@ -325,38 +528,47 @@ export default function WatchPage() {
       clearTimeout(controlsTimeoutRef.current)
     }
     controlsTimeoutRef.current = setTimeout(() => {
-      if (playStateRef.current === 'main') setShowControls(false)
+      if (playStateRef.current === 'main' && !needsUserPlay) {
+        setShowControls(false)
+      }
     }, 4000)
-  }, [])
+  }, [needsUserPlay])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
+      if (stallCheckRef.current) clearInterval(stallCheckRef.current)
+
+      // Proper cleanup (MDN best practice)
       if (introVideoRef.current) {
         introVideoRef.current.pause()
-        introVideoRef.current.removeAttribute('src')
+        introVideoRef.current.src = ''
         introVideoRef.current.load()
       }
       if (mainVideoRef.current) {
         mainVideoRef.current.pause()
-        mainVideoRef.current.removeAttribute('src')
+        mainVideoRef.current.src = ''
         mainVideoRef.current.load()
       }
     }
   }, [])
 
-  // Keyboard shortcut to skip intro
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (playState === 'intro' && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault()
         handleTransitionToMain()
       }
+      if (playState === 'main' && needsUserPlay && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault()
+        handleUserPlay()
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [playState, handleTransitionToMain])
+  }, [playState, handleTransitionToMain, needsUserPlay, handleUserPlay])
 
   // === RENDER ===
 
@@ -401,8 +613,9 @@ export default function WatchPage() {
       transition={{ duration: 0.3 }}
       onMouseMove={handleInteraction}
       onTouchStart={handleInteraction}
+      onClick={handleInteraction}
     >
-      {/* Back button - z-[30] above everything */}
+      {/* Back button */}
       <AnimatePresence>
         {showControls && (
           <motion.button
@@ -419,9 +632,9 @@ export default function WatchPage() {
         )}
       </AnimatePresence>
 
-      {/* Cast button - z-[30] */}
+      {/* Cast button */}
       <AnimatePresence>
-        {showControls && mainVideoRef.current && playState === 'main' && (
+        {showControls && mainVideoRef.current && playState === 'main' && !needsUserPlay && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -437,7 +650,7 @@ export default function WatchPage() {
         )}
       </AnimatePresence>
 
-      {/* Skip intro button - z-[30] */}
+      {/* Skip intro button */}
       <AnimatePresence>
         {isPlayingIntro && showControls && introReady && (
           <motion.button
@@ -454,7 +667,7 @@ export default function WatchPage() {
         )}
       </AnimatePresence>
 
-      {/* Intro loading overlay - z-[25] */}
+      {/* Intro loading overlay */}
       {!introReady && !introFailed && isPlayingIntro && (
         <div
           className="absolute inset-0 flex items-center justify-center bg-black"
@@ -467,7 +680,7 @@ export default function WatchPage() {
         </div>
       )}
 
-      {/* Intro error overlay - z-[25] */}
+      {/* Intro error overlay - auto-skips */}
       {introFailed && isPlayingIntro && (
         <div
           className="absolute inset-0 flex items-center justify-center bg-black"
@@ -480,8 +693,26 @@ export default function WatchPage() {
         </div>
       )}
 
-      {/* Buffering overlay - z-[20] pointer-events-none */}
-      {isBuffering && playState === 'main' && (
+      {/* User play required overlay (autoplay blocked) */}
+      {needsUserPlay && playState === 'main' && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-black/60"
+          style={{ zIndex: 25 }}
+        >
+          <button
+            onClick={handleUserPlay}
+            className="flex flex-col items-center gap-4 p-8 rounded-2xl bg-black/50 hover:bg-black/70 transition-colors cursor-pointer"
+          >
+            <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center">
+              <Play className="h-10 w-10 text-white ml-1" />
+            </div>
+            <p className="text-white font-medium">Tap to play</p>
+          </button>
+        </div>
+      )}
+
+      {/* Buffering overlay */}
+      {isBuffering && playState === 'main' && !needsUserPlay && (
         <div
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{ zIndex: 20 }}
@@ -493,36 +724,34 @@ export default function WatchPage() {
         </div>
       )}
 
-      {/* Video error overlay - z-[25] */}
+      {/* Video error overlay */}
       {videoError && playState === 'main' && (
         <div
           className="absolute inset-0 flex items-center justify-center bg-black/80"
           style={{ zIndex: 25 }}
         >
-          <div className="flex flex-col items-center gap-4 p-6">
+          <div className="flex flex-col items-center gap-4 p-6 max-w-sm">
             <p className="text-lg text-red-400">Playback Error</p>
-            <p className="text-sm text-white/60 max-w-md text-center">{videoError}</p>
-            <button
-              onClick={() => {
-                setVideoError(null)
-                setIsBuffering(true)
-                if (mainVideoRef.current) {
-                  mainVideoRef.current.load()
-                  mainVideoRef.current.play().catch(console.error)
-                }
-              }}
-              className="mt-2 px-5 py-2.5 bg-accent rounded-lg text-sm font-medium hover:bg-accent/80 transition-colors cursor-pointer"
-            >
-              Retry
-            </button>
+            <p className="text-sm text-white/60 text-center">{videoError}</p>
+            <div className="flex gap-3 mt-2">
+              <button
+                onClick={handleRetry}
+                className="px-5 py-2.5 bg-accent rounded-lg text-sm font-medium hover:bg-accent/80 transition-colors cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => router.push('/browse')}
+                className="px-5 py-2.5 bg-white/10 rounded-lg text-sm font-medium hover:bg-white/20 transition-colors cursor-pointer"
+              >
+                Go Back
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/*
-        Intro video - z-[10] when visible, z-[1] when hidden.
-        src set programmatically in useEffect.
-      */}
+      {/* Intro video */}
       {introVideoUrl && (
         <video
           ref={introVideoRef}
@@ -540,23 +769,22 @@ export default function WatchPage() {
         />
       )}
 
-      {/*
-        Main video - z-[10] when visible.
-        Uses native browser controls for play/pause, volume, seek, fullscreen.
-        preload="none" when intro exists to avoid double-buffering.
-      */}
+      {/* Main video with native controls */}
       {mainVideoUrl && (
         <video
           ref={mainVideoRef}
           src={mainVideoUrl}
-          controls={showMainVideo}
+          controls={showMainVideo && !needsUserPlay}
+          controlsList="nodownload"
           playsInline
-          preload={introClip ? 'none' : 'auto'}
+          preload={introClip ? 'none' : 'metadata'}
           onWaiting={handleMainWaiting}
           onPlaying={handleMainPlaying}
           onCanPlayThrough={handleMainCanPlayThrough}
+          onProgress={handleMainProgress}
           onError={handleMainError}
           onEnded={handleMainEnded}
+          onStalled={handleMainStalled}
           className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
           style={{
             opacity: showMainVideo ? 1 : 0,
@@ -566,7 +794,7 @@ export default function WatchPage() {
         />
       )}
 
-      {/* Intro badge - z-[15] above video but below buttons */}
+      {/* Intro badge */}
       <AnimatePresence>
         {isPlayingIntro && introReady && (
           <motion.div
@@ -583,11 +811,7 @@ export default function WatchPage() {
         )}
       </AnimatePresence>
 
-      {/*
-        Title overlay - z-[5] BELOW video so it never blocks native controls.
-        Only visible during intro (when main video is transparent).
-        During main playback, native controls handle everything.
-      */}
+      {/* Title during intro */}
       <AnimatePresence>
         {showControls && isPlayingIntro && (
           <motion.div
