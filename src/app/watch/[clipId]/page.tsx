@@ -407,24 +407,57 @@ export default function WatchPage() {
     if (playState !== 'main' || introClip || !mainVideoRef.current) return
 
     const video = mainVideoRef.current
-    console.log('[Player] Starting main video (no intro)')
+    console.log('[Player] Starting main video (no intro), readyState:', video.readyState)
 
-    video.preload = 'auto'
-    video.load()
+    // Clear any stuck buffering state
+    setIsBuffering(true)
+    setNeedsUserPlay(false)
 
     const startPlayback = async () => {
+      console.log('[Player] Starting playback, readyState:', video.readyState)
+
       // Try unmuted first (may work if user clicked to get here)
       const success = await attemptPlay(video, true)
+      console.log('[Player] attemptPlay result:', success)
 
       if (success) {
+        // Video should now be playing - clear buffering after short delay
+        setTimeout(() => {
+          if (video && !video.paused && video.currentTime > 0) {
+            setIsBuffering(false)
+          }
+        }, 500)
         startStallDetection(video)
+      } else {
+        setIsBuffering(false)
       }
     }
 
-    if (video.readyState >= 3) {
+    // Force reload to ensure clean state
+    if (video.src && video.readyState >= 2) {
+      // Video already has some data
       startPlayback()
     } else {
-      video.addEventListener('canplay', () => startPlayback(), { once: true })
+      // Need to load first
+      const onCanPlay = () => {
+        video.removeEventListener('canplay', onCanPlay)
+        startPlayback()
+      }
+      video.addEventListener('canplay', onCanPlay)
+
+      // Failsafe: try to play anyway after 5s
+      const failsafe = setTimeout(() => {
+        video.removeEventListener('canplay', onCanPlay)
+        if (playStateRef.current === 'main' && video.paused) {
+          console.warn('[Player] Failsafe triggered, attempting play')
+          startPlayback()
+        }
+      }, 5000)
+
+      return () => {
+        clearTimeout(failsafe)
+        video.removeEventListener('canplay', onCanPlay)
+      }
     }
   }, [playState, introClip, attemptPlay, startStallDetection])
 
@@ -451,7 +484,11 @@ export default function WatchPage() {
   // === MAIN VIDEO EVENT HANDLERS ===
   const handleMainWaiting = useCallback(() => {
     console.log('[Player] Video waiting/buffering')
-    setIsBuffering(true)
+    // Only show buffering if video has been playing
+    const video = mainVideoRef.current
+    if (video && video.currentTime > 0) {
+      setIsBuffering(true)
+    }
   }, [])
 
   const handleMainPlaying = useCallback(() => {
@@ -462,7 +499,16 @@ export default function WatchPage() {
   }, [])
 
   const handleMainCanPlayThrough = useCallback(() => {
+    console.log('[Player] Video canplaythrough')
     setIsBuffering(false)
+  }, [])
+
+  const handleMainTimeUpdate = useCallback(() => {
+    // If video is progressing, definitely not buffering
+    const video = mainVideoRef.current
+    if (video && video.currentTime > 0 && !video.paused) {
+      setIsBuffering(false)
+    }
   }, [])
 
   const handleMainProgress = useCallback(() => {
@@ -781,6 +827,7 @@ export default function WatchPage() {
           onWaiting={handleMainWaiting}
           onPlaying={handleMainPlaying}
           onCanPlayThrough={handleMainCanPlayThrough}
+          onTimeUpdate={handleMainTimeUpdate}
           onProgress={handleMainProgress}
           onError={handleMainError}
           onEnded={handleMainEnded}

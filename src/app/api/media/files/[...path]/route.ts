@@ -38,7 +38,8 @@ function isStreamingType(contentType: string): boolean {
 }
 
 // Chunk size when browser sends open-ended range (e.g. bytes=0-)
-const RANGE_CHUNK_SIZE = 10 * 1024 * 1024
+// 2MB chunks for faster initial load and smoother streaming
+const RANGE_CHUNK_SIZE = 2 * 1024 * 1024
 
 /**
  * Parse Range header into start/end bytes.
