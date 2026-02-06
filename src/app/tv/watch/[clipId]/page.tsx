@@ -86,6 +86,7 @@ export default function TVWatchPage() {
   const stallCheckRef = useRef<NodeJS.Timeout | null>(null)
   const lastTimeRef = useRef<number>(0)
   const playStateRef = useRef<PlayState>('loading')
+  const bufferDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   const { goBack } = useTVNavigation()
 
@@ -496,6 +497,7 @@ export default function TVWatchPage() {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
       if (stallCheckRef.current) clearInterval(stallCheckRef.current)
+      if (bufferDebounceRef.current) clearTimeout(bufferDebounceRef.current)
 
       // Release video resources on unmount
       if (introVideoRef.current) {
@@ -537,10 +539,20 @@ export default function TVWatchPage() {
   }, [])
 
   const handleWaiting = useCallback(() => {
-    setIsBuffering(true)
+    // Debounce: only show buffering if stalled for 2+ seconds
+    // LG WebOS fires 'waiting' frequently during normal playback
+    if (bufferDebounceRef.current) clearTimeout(bufferDebounceRef.current)
+    bufferDebounceRef.current = setTimeout(() => {
+      setIsBuffering(true)
+    }, 2000)
   }, [])
 
   const handlePlaying = useCallback(() => {
+    // Cancel any pending buffering indicator
+    if (bufferDebounceRef.current) {
+      clearTimeout(bufferDebounceRef.current)
+      bufferDebounceRef.current = null
+    }
     setIsBuffering(false)
     setIsPlaying(true)
     setVideoError(null)
@@ -551,6 +563,10 @@ export default function TVWatchPage() {
   }, [])
 
   const handleCanPlayThrough = useCallback(() => {
+    if (bufferDebounceRef.current) {
+      clearTimeout(bufferDebounceRef.current)
+      bufferDebounceRef.current = null
+    }
     setIsBuffering(false)
   }, [])
 
