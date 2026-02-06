@@ -8,6 +8,8 @@ import {
   CopyObjectCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+import https from 'https'
 import type { StorageProvider, StorageFile, UploadOptions, FileMetadata } from './types'
 
 interface ZadaraConfig {
@@ -36,6 +38,14 @@ export class ZadaraStorageProvider implements StorageProvider {
 
   constructor() {
     this.config = getZadaraConfig()
+
+    // Reuse TCP connections and increase pool for concurrent media requests
+    const agent = new https.Agent({
+      maxSockets: 50,
+      keepAlive: true,
+      keepAliveMsecs: 1000,
+    })
+
     this.client = new S3Client({
       endpoint: this.config.endpoint,
       forcePathStyle: true, // REQUIRED for Zadara
@@ -44,6 +54,11 @@ export class ZadaraStorageProvider implements StorageProvider {
         accessKeyId: this.config.accessKeyId,
         secretAccessKey: this.config.secretAccessKey,
       },
+      requestHandler: new NodeHttpHandler({
+        httpsAgent: agent,
+        connectionTimeout: 5000,
+        socketTimeout: 30000,
+      }),
     })
   }
 

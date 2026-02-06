@@ -57,6 +57,8 @@ export default function TVWatchPage() {
   const [introClip, setIntroClip] = useState<IntroClipRow | null>(null)
   const [presentationData, setPresentationData] = useState<PresentationData | null>(null)
   const [playState, setPlayState] = useState<PlayState>('loading')
+  const [introSignedUrl, setIntroSignedUrl] = useState<string | null>(null)
+  const [mainSignedUrl, setMainSignedUrl] = useState<string | null>(null)
 
   // UI state
   const [showControls, setShowControls] = useState(true)
@@ -93,6 +95,18 @@ export default function TVWatchPage() {
   // Calculate progress percentage
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
+  // Fetch a signed URL for direct storage access (falls back to proxy URL)
+  const fetchSignedUrl = useCallback(async (storagePath: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/media/signed-url/${storagePath}`)
+      const json = await res.json()
+      if (json.success && json.url) return json.url
+    } catch {
+      // Signed URL unavailable — will fall back to proxy
+    }
+    return null
+  }, [])
+
   // Load clip data
   useEffect(() => {
     async function loadClip() {
@@ -107,6 +121,13 @@ export default function TVWatchPage() {
           }
           setClip(found)
 
+          // Fetch signed URL for main video in background
+          if (found.video_path && found.video_path !== 'presentation') {
+            fetchSignedUrl(found.video_path).then(url => {
+              if (url) setMainSignedUrl(url)
+            })
+          }
+
           if (found.video_path === 'presentation') {
             const presRes = await fetch(`/api/presentations/${clipId}`)
             const presJson: ApiResponse<PresentationData> = await presRes.json()
@@ -117,6 +138,9 @@ export default function TVWatchPage() {
                 const introJson: ApiResponse<IntroClipRow> = await introRes.json()
                 if (introJson.success && introJson.data) {
                   setIntroClip(introJson.data)
+                  fetchSignedUrl(introJson.data.video_path).then(url => {
+                    if (url) setIntroSignedUrl(url)
+                  })
                   setPlayState('intro')
                 } else {
                   setPlayState('presentation')
@@ -135,6 +159,9 @@ export default function TVWatchPage() {
             const introJson: ApiResponse<IntroClipRow> = await introRes.json()
             if (introJson.success && introJson.data) {
               setIntroClip(introJson.data)
+              fetchSignedUrl(introJson.data.video_path).then(url => {
+                if (url) setIntroSignedUrl(url)
+              })
               setPlayState('intro')
             } else {
               setPlayState('main')
@@ -152,7 +179,7 @@ export default function TVWatchPage() {
     }
 
     loadClip()
-  }, [clipId])
+  }, [clipId, fetchSignedUrl])
 
   // Show controls temporarily
   const showControlsTemporarily = useCallback(() => {
@@ -173,8 +200,10 @@ export default function TVWatchPage() {
     const video = introVideoRef.current
     if (!video) return
 
-    const introUrl = `/api/media/files/${introClip.video_path}`
-    console.log('[TV] Setting up intro:', introUrl)
+    // Use signed URL for direct Zadara access, fall back to proxy
+    const introUrl = introSignedUrl || `/api/media/files/${introClip.video_path}`
+    const loadStart = Date.now()
+    console.log('[TV] Setting up intro:', introSignedUrl ? 'direct' : 'proxy')
 
     // Reset state
     setIntroReady(false)
@@ -190,12 +219,14 @@ export default function TVWatchPage() {
     video.load()
 
     let playAttempted = false
+    let hasAnyData = false
 
     const tryPlay = async () => {
       if (playAttempted) return
       playAttempted = true
 
-      console.log('[TV] Intro ready, attempting muted play, readyState:', video.readyState)
+      const elapsed = Date.now() - loadStart
+      console.log(`[TV] Intro ready (${elapsed}ms), attempting muted play, readyState:`, video.readyState)
       try {
         video.muted = true
         await video.play()
@@ -231,50 +262,76 @@ export default function TVWatchPage() {
       }
     }
 
-    // LG WebOS fires canplaythrough reliably after load()
-    const onCanPlay = () => tryPlay()
-    const onLoadedData = () => tryPlay()
+    const onCanPlay = () => {
+      const elapsed = Date.now() - loadStart
+      console.log(`[TV] Intro canplay (${elapsed}ms)`)
+      tryPlay()
+    }
+    const onLoadedData = () => {
+      hasAnyData = true
+      const elapsed = Date.now() - loadStart
+      console.log(`[TV] Intro loadeddata (${elapsed}ms)`)
+      tryPlay()
+    }
+    const onProgress = () => {
+      hasAnyData = true
+    }
     const onError = () => {
-      console.error('[TV] Intro load error:', video.error?.code, video.error?.message)
+      const error = video.error
+      if (error?.message?.includes('Empty src')) return
+      console.error('[TV] Intro load error:', error?.code, error?.message)
       setIntroFailed(true)
+    }
+    const onStalled = () => {
+      const elapsed = Date.now() - loadStart
+      console.warn(`[TV] Intro stalled (${elapsed}ms)`)
     }
 
     video.addEventListener('canplaythrough', onCanPlay)
+    video.addEventListener('canplay', onCanPlay)
     video.addEventListener('loadeddata', onLoadedData)
+    video.addEventListener('progress', onProgress)
     video.addEventListener('error', onError)
+    video.addEventListener('stalled', onStalled)
 
     // If already loaded (cached), try immediately
     if (video.readyState >= 3) {
       tryPlay()
     }
 
-    // Failsafe: skip intro after 8 seconds if it hasn't started
-    const failsafe = setTimeout(() => {
-      if (!playAttempted || video.paused) {
-        console.warn('[TV] Intro failsafe triggered - skipping')
+    // Smart failsafe: skip quickly if no data, wait longer if loading
+    const earlyFailsafe = setTimeout(() => {
+      if (!hasAnyData && !playAttempted) {
+        console.warn('[TV] Intro early failsafe — no data after 4s, skipping')
         setIntroFailed(true)
       }
-    }, 8000)
+    }, 4000)
+
+    const lateFailsafe = setTimeout(() => {
+      if (!playAttempted || video.paused) {
+        const elapsed = Date.now() - loadStart
+        console.warn(`[TV] Intro late failsafe triggered (${elapsed}ms)`)
+        setIntroFailed(true)
+      }
+    }, 12000)
 
     return () => {
-      clearTimeout(failsafe)
+      clearTimeout(earlyFailsafe)
+      clearTimeout(lateFailsafe)
       video.removeEventListener('canplaythrough', onCanPlay)
+      video.removeEventListener('canplay', onCanPlay)
       video.removeEventListener('loadeddata', onLoadedData)
+      video.removeEventListener('progress', onProgress)
       video.removeEventListener('error', onError)
+      video.removeEventListener('stalled', onStalled)
     }
-  }, [playState, introClip])
+  }, [playState, introClip, introSignedUrl])
 
-  // Auto-skip intro on failure
+  // Auto-skip intro on failure — immediate transition
   useEffect(() => {
     if (!introFailed || playState !== 'intro') return
-
-    const timer = setTimeout(() => {
-      if (playStateRef.current === 'intro') {
-        console.log('[TV] Skipping failed intro -> main/presentation')
-        handleTransitionToMain()
-      }
-    }, 1000)
-    return () => clearTimeout(timer)
+    console.log('[TV] Intro failed, transitioning to main')
+    handleTransitionToMain()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [introFailed, playState])
 
@@ -285,6 +342,7 @@ export default function TVWatchPage() {
       if (playStateRef.current === 'main' || playStateRef.current === 'presentation') return
     }
 
+    const transitionStart = Date.now()
     console.log('[TV] Transitioning from intro to main')
     setPlayState('transitioning')
 
@@ -311,6 +369,8 @@ export default function TVWatchPage() {
       console.log('[TV] Main video load() called')
 
       const startMain = async () => {
+        const elapsed = Date.now() - transitionStart
+        console.log(`[TV] Starting main video (transition took ${elapsed}ms)`)
         try {
           // Start muted for autoplay reliability
           mainVideo.muted = true
@@ -323,12 +383,16 @@ export default function TVWatchPage() {
           // Delayed unmute
           setTimeout(() => {
             if (mainVideo && !mainVideo.paused) {
-              try {
-                mainVideo.muted = false
+              mainVideo.muted = false
+              // Browser may synchronously pause when unmuting without user gesture
+              if (mainVideo.paused) {
+                console.log('[TV] Unmute caused pause, re-muting and resuming')
+                mainVideo.muted = true
+                setIsMuted(true)
+                mainVideo.play().catch(() => {})
+              } else {
                 setIsMuted(false)
                 console.log('[TV] Main video unmuted')
-              } catch {
-                console.warn('[TV] Main unmute failed')
               }
             }
           }, 500)
@@ -350,14 +414,21 @@ export default function TVWatchPage() {
       if (mainVideo.readyState >= 3) {
         startMain()
       } else {
-        mainVideo.addEventListener('canplay', startMain, { once: true })
+        const onReady = () => {
+          mainVideo.removeEventListener('canplay', onReady)
+          const elapsed = Date.now() - transitionStart
+          console.log(`[TV] Main video ready (${elapsed}ms), readyState:`, mainVideo.readyState)
+          startMain()
+        }
+        mainVideo.addEventListener('canplay', onReady)
         // Failsafe: don't wait forever
         setTimeout(() => {
           if (playStateRef.current === 'transitioning') {
             console.warn('[TV] Main video canplay timeout, forcing start')
+            mainVideo.removeEventListener('canplay', onReady)
             startMain()
           }
-        }, 5000)
+        }, 6000)
       }
     } else {
       setPlayState('main')
@@ -723,8 +794,13 @@ export default function TVWatchPage() {
     return <SlideshowPlayer presentationData={presentationData} />
   }
 
-  const introVideoUrl = introClip ? `/api/media/files/${introClip.video_path}` : null
-  const mainVideoUrl = clip.video_path !== 'presentation' ? `/api/media/files/${clip.video_path}` : null
+  // Use signed URLs for direct storage access, fall back to proxy
+  const introVideoUrl = introClip
+    ? (introSignedUrl || `/api/media/files/${introClip.video_path}`)
+    : null
+  const mainVideoUrl = clip.video_path !== 'presentation'
+    ? (mainSignedUrl || `/api/media/files/${clip.video_path}`)
+    : null
   const isPlayingIntro = playState === 'intro'
   const isTransitioning = playState === 'transitioning'
   const showIntroVideo = isPlayingIntro || isTransitioning

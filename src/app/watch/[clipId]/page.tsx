@@ -46,6 +46,8 @@ export default function WatchPage() {
   const [introClip, setIntroClip] = useState<IntroClipRow | null>(null)
   const [presentationData, setPresentationData] = useState<PresentationData | null>(null)
   const [playState, setPlayState] = useState<PlayState>('loading')
+  const [introSignedUrl, setIntroSignedUrl] = useState<string | null>(null)
+  const [mainSignedUrl, setMainSignedUrl] = useState<string | null>(null)
 
   // UI state
   const [showControls, setShowControls] = useState(true)
@@ -71,6 +73,18 @@ export default function WatchPage() {
   // Max retries for stall recovery
   const MAX_RETRIES = 3
 
+  // Fetch a signed URL for direct storage access (falls back to proxy URL)
+  const fetchSignedUrl = useCallback(async (storagePath: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/media/signed-url/${storagePath}`)
+      const json = await res.json()
+      if (json.success && json.url) return json.url
+    } catch {
+      // Signed URL unavailable — will fall back to proxy
+    }
+    return null
+  }, [])
+
   // Load clip data
   useEffect(() => {
     async function loadClip() {
@@ -85,6 +99,13 @@ export default function WatchPage() {
           }
           setClip(found)
 
+          // Fetch signed URL for main video in background
+          if (found.video_path && found.video_path !== 'presentation') {
+            fetchSignedUrl(found.video_path).then(url => {
+              if (url) setMainSignedUrl(url)
+            })
+          }
+
           if (found.video_path === 'presentation') {
             const presRes = await fetch(`/api/presentations/${clipId}`)
             const presJson: ApiResponse<PresentationData> = await presRes.json()
@@ -95,6 +116,10 @@ export default function WatchPage() {
                 const introJson: ApiResponse<IntroClipRow> = await introRes.json()
                 if (introJson.success && introJson.data) {
                   setIntroClip(introJson.data)
+                  // Fetch signed URL for intro in background
+                  fetchSignedUrl(introJson.data.video_path).then(url => {
+                    if (url) setIntroSignedUrl(url)
+                  })
                   setPlayState('intro')
                 } else {
                   setPlayState('presentation')
@@ -113,6 +138,10 @@ export default function WatchPage() {
             const introJson: ApiResponse<IntroClipRow> = await introRes.json()
             if (introJson.success && introJson.data) {
               setIntroClip(introJson.data)
+              // Fetch signed URL for intro in background
+              fetchSignedUrl(introJson.data.video_path).then(url => {
+                if (url) setIntroSignedUrl(url)
+              })
               setPlayState('intro')
             } else {
               setPlayState('main')
@@ -130,7 +159,7 @@ export default function WatchPage() {
     }
 
     loadClip()
-  }, [clipId])
+  }, [clipId, fetchSignedUrl])
 
   // === ROBUST PLAY FUNCTION ===
   // Handles all autoplay policies across browsers
@@ -257,8 +286,10 @@ export default function WatchPage() {
     const video = introVideoRef.current
     if (!video) return
 
-    const introUrl = `/api/media/files/${introClip.video_path}`
-    console.log('[Player] Setting up intro:', introUrl)
+    // Use signed URL for direct Zadara access, fall back to proxy
+    const introUrl = introSignedUrl || `/api/media/files/${introClip.video_path}`
+    const loadStart = Date.now()
+    console.log('[Player] Setting up intro:', introSignedUrl ? 'direct' : 'proxy')
 
     setIntroReady(false)
     setIntroFailed(false)
@@ -271,38 +302,58 @@ export default function WatchPage() {
     video.load()
 
     let playAttempted = false
+    let hasAnyData = false
 
     const tryPlay = async () => {
       if (playAttempted) return
       playAttempted = true
 
-      console.log('[Player] Intro ready, readyState:', video.readyState)
+      const elapsed = Date.now() - loadStart
+      console.log('[Player] Intro ready, readyState:', video.readyState, `(${elapsed}ms)`)
       const success = await attemptPlay(video)
 
       if (success) {
         setIntroReady(true)
+        // Start preloading main video now that intro is playing
+        const mainVideo = mainVideoRef.current
+        if (mainVideo && mainVideo.preload !== 'auto') {
+          console.log('[Player] Preloading main video in background')
+          mainVideo.preload = 'metadata'
+        }
       } else {
         setIntroFailed(true)
       }
     }
 
-    // Use canplaythrough for more reliable playback
     const onCanPlayThrough = () => {
-      console.log('[Player] Intro canplaythrough')
+      const elapsed = Date.now() - loadStart
+      console.log(`[Player] Intro canplaythrough (${elapsed}ms)`)
+      tryPlay()
+    }
+
+    // Try playing as soon as we have enough data (readyState >= 3 = HAVE_FUTURE_DATA)
+    const onCanPlay = () => {
+      const elapsed = Date.now() - loadStart
+      console.log(`[Player] Intro canplay (${elapsed}ms)`)
       tryPlay()
     }
 
     const onLoadedData = () => {
-      console.log('[Player] Intro loadeddata')
-      // Give a moment for more buffering
-      setTimeout(() => {
-        if (!playAttempted) tryPlay()
-      }, 200)
+      hasAnyData = true
+      const elapsed = Date.now() - loadStart
+      console.log(`[Player] Intro loadeddata (${elapsed}ms), readyState:`, video.readyState)
+      // Try playing immediately — don't wait for canplaythrough on slow networks
+      if (video.readyState >= 3) {
+        tryPlay()
+      }
+    }
+
+    const onProgress = () => {
+      hasAnyData = true
     }
 
     const onError = () => {
       const error = video.error
-      // Ignore "Empty src" error - it happens during cleanup
       if (error?.message?.includes('Empty src')) {
         console.log('[Player] Intro cleanup (expected)')
         return
@@ -312,58 +363,57 @@ export default function WatchPage() {
     }
 
     const onStalled = () => {
-      console.warn('[Player] Intro stalled')
+      const elapsed = Date.now() - loadStart
+      console.warn(`[Player] Intro stalled (${elapsed}ms)`)
     }
 
     video.addEventListener('canplaythrough', onCanPlayThrough)
+    video.addEventListener('canplay', onCanPlay)
     video.addEventListener('loadeddata', onLoadedData)
+    video.addEventListener('progress', onProgress)
     video.addEventListener('error', onError)
     video.addEventListener('stalled', onStalled)
 
     // If already cached/ready
-    if (video.readyState >= 4) {
+    if (video.readyState >= 3) {
       tryPlay()
     }
 
-    // Failsafe: skip intro after 6s if it hasn't started (was 12s - too long)
-    const failsafe = setTimeout(() => {
-      if (!playAttempted || video.paused) {
-        console.warn('[Player] Intro failsafe triggered')
+    // Smart failsafe: skip quickly if no data arrives, wait longer if loading
+    const earlyFailsafe = setTimeout(() => {
+      if (!hasAnyData && !playAttempted) {
+        console.warn('[Player] Intro early failsafe — no data after 3s, skipping')
         setIntroFailed(true)
       }
-    }, 6000)
+    }, 3000)
+
+    const lateFailsafe = setTimeout(() => {
+      if (!playAttempted || video.paused) {
+        const elapsed = Date.now() - loadStart
+        console.warn(`[Player] Intro late failsafe triggered (${elapsed}ms)`)
+        setIntroFailed(true)
+      }
+    }, 10000)
 
     return () => {
-      clearTimeout(failsafe)
+      clearTimeout(earlyFailsafe)
+      clearTimeout(lateFailsafe)
       video.removeEventListener('canplaythrough', onCanPlayThrough)
+      video.removeEventListener('canplay', onCanPlay)
       video.removeEventListener('loadeddata', onLoadedData)
+      video.removeEventListener('progress', onProgress)
       video.removeEventListener('error', onError)
       video.removeEventListener('stalled', onStalled)
     }
-  }, [playState, introClip, attemptPlay])
+  }, [playState, introClip, introSignedUrl, attemptPlay])
 
-  // Auto-skip failed intro
+  // Auto-skip failed intro — transition immediately, no extra delay
   useEffect(() => {
     if (!introFailed || playState !== 'intro') return
-    const timer = setTimeout(() => {
-      if (playStateRef.current === 'intro') {
-        handleTransitionToMain()
-      }
-    }, 500) // Reduced from 1000ms - skip faster
-    return () => clearTimeout(timer)
+    console.log('[Player] Intro failed, transitioning to main')
+    handleTransitionToMain()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [introFailed, playState])
-
-  // Preload main video in background once intro starts playing
-  useEffect(() => {
-    if (!introReady || playState !== 'intro' || !mainVideoRef.current) return
-
-    const mainVideo = mainVideoRef.current
-    if (mainVideo && mainVideo.preload !== 'auto') {
-      console.log('[Player] Preloading main video in background')
-      mainVideo.preload = 'metadata' // Start loading metadata at least
-    }
-  }, [introReady, playState])
 
   // === TRANSITION FROM INTRO TO MAIN ===
   const handleTransitionToMain = useCallback(() => {
@@ -371,9 +421,12 @@ export default function WatchPage() {
       if (playStateRef.current === 'main' || playStateRef.current === 'presentation') return
     }
 
+    const transitionStart = Date.now()
     console.log('[Player] Transitioning from intro to main')
     setPlayState('transitioning')
     setRetryCount(0)
+    // Don't show buffering spinner during transition — show a clean loading state instead
+    setIsBuffering(false)
 
     // Cleanup intro video properly (MDN best practice)
     const introVideo = introVideoRef.current
@@ -390,7 +443,7 @@ export default function WatchPage() {
 
     const mainVideo = mainVideoRef.current
     if (mainVideo) {
-      // Start loading main video
+      // Start loading main video aggressively
       mainVideo.preload = 'auto'
 
       // Only call load() if src is not already set or video has no data
@@ -399,20 +452,27 @@ export default function WatchPage() {
       }
 
       const startMain = async () => {
-        console.log('[Player] Starting main video playback')
-        setPlayState('main') // Set state first so UI updates
-        setIsBuffering(true)
+        const elapsed = Date.now() - transitionStart
+        console.log(`[Player] Starting main video playback (transition took ${elapsed}ms)`)
+        setPlayState('main')
+        // Only show buffering if we had to wait for data
+        if (elapsed > 1000) {
+          setIsBuffering(true)
+        }
 
         const success = await attemptPlay(mainVideo)
         console.log('[Player] Main play result:', success)
 
         if (success) {
-          // Clear buffering after a short delay once playing
-          setTimeout(() => {
+          // Clear buffering once video actually progresses
+          const checkPlaying = () => {
             if (mainVideo && !mainVideo.paused && mainVideo.currentTime > 0) {
               setIsBuffering(false)
+            } else {
+              setTimeout(checkPlaying, 300)
             }
-          }, 500)
+          }
+          setTimeout(checkPlaying, 300)
           startStallDetection(mainVideo)
         } else {
           setIsBuffering(false)
@@ -421,33 +481,36 @@ export default function WatchPage() {
 
       // Wait for video to be ready, but don't wait forever
       if (mainVideo.readyState >= 2) {
-        // Has metadata, can attempt play
         startMain()
       } else {
-        const onLoadedData = () => {
-          mainVideo.removeEventListener('loadeddata', onLoadedData)
-          mainVideo.removeEventListener('canplay', onCanPlay)
+        const onReady = () => {
+          mainVideo.removeEventListener('loadeddata', onReady)
+          mainVideo.removeEventListener('canplay', onReady)
           clearTimeout(failsafeTimer)
+          const elapsed = Date.now() - transitionStart
+          console.log(`[Player] Main video ready (${elapsed}ms), readyState:`, mainVideo.readyState)
           startMain()
         }
-        const onCanPlay = () => {
-          mainVideo.removeEventListener('loadeddata', onLoadedData)
-          mainVideo.removeEventListener('canplay', onCanPlay)
-          clearTimeout(failsafeTimer)
-          startMain()
-        }
-        mainVideo.addEventListener('loadeddata', onLoadedData)
-        mainVideo.addEventListener('canplay', onCanPlay)
+        mainVideo.addEventListener('loadeddata', onReady)
+        mainVideo.addEventListener('canplay', onReady)
 
-        // Failsafe - reduced from 8s to 4s
+        // Show buffering after 2s of waiting (not immediately)
+        const bufferTimer = setTimeout(() => {
+          if (playStateRef.current === 'transitioning') {
+            setIsBuffering(true)
+          }
+        }, 2000)
+
+        // Failsafe: try to play anyway after 6s
         const failsafeTimer = setTimeout(() => {
+          clearTimeout(bufferTimer)
           if (playStateRef.current === 'transitioning') {
             console.warn('[Player] Main video canplay timeout, attempting play anyway')
-            mainVideo.removeEventListener('loadeddata', onLoadedData)
-            mainVideo.removeEventListener('canplay', onCanPlay)
+            mainVideo.removeEventListener('loadeddata', onReady)
+            mainVideo.removeEventListener('canplay', onReady)
             startMain()
           }
-        }, 4000)
+        }, 6000)
       }
     } else {
       setPlayState('main')
@@ -459,6 +522,7 @@ export default function WatchPage() {
     if (playState !== 'main' || introClip || !mainVideoRef.current) return
 
     const video = mainVideoRef.current
+    const loadStart = Date.now()
     console.log('[Player] Starting main video (no intro), readyState:', video.readyState)
 
     // Clear any stuck buffering state
@@ -466,19 +530,23 @@ export default function WatchPage() {
     setNeedsUserPlay(false)
 
     const startPlayback = async () => {
-      console.log('[Player] Starting playback, readyState:', video.readyState)
+      const elapsed = Date.now() - loadStart
+      console.log(`[Player] Starting playback (${elapsed}ms), readyState:`, video.readyState)
 
       // Try unmuted first (may work if user clicked to get here)
       const success = await attemptPlay(video, true)
       console.log('[Player] attemptPlay result:', success)
 
       if (success) {
-        // Video should now be playing - clear buffering after short delay
-        setTimeout(() => {
+        // Clear buffering once video actually progresses
+        const checkPlaying = () => {
           if (video && !video.paused && video.currentTime > 0) {
             setIsBuffering(false)
+          } else {
+            setTimeout(checkPlaying, 300)
           }
-        }, 500)
+        }
+        setTimeout(checkPlaying, 300)
         startStallDetection(video)
       } else {
         setIsBuffering(false)
@@ -696,8 +764,13 @@ export default function WatchPage() {
     return <SlideshowPlayer presentationData={presentationData} />
   }
 
-  const introVideoUrl = introClip ? `/api/media/files/${introClip.video_path}` : null
-  const mainVideoUrl = clip.video_path !== 'presentation' ? `/api/media/files/${clip.video_path}` : null
+  // Use signed URLs for direct storage access, fall back to proxy
+  const introVideoUrl = introClip
+    ? (introSignedUrl || `/api/media/files/${introClip.video_path}`)
+    : null
+  const mainVideoUrl = clip.video_path !== 'presentation'
+    ? (mainSignedUrl || `/api/media/files/${clip.video_path}`)
+    : null
   const isPlayingIntro = playState === 'intro'
   const isTransitioning = playState === 'transitioning'
   const showIntroVideo = isPlayingIntro || isTransitioning
@@ -765,28 +838,17 @@ export default function WatchPage() {
         )}
       </AnimatePresence>
 
-      {/* Intro loading overlay */}
-      {!introReady && !introFailed && isPlayingIntro && (
+      {/* Loading overlay — shown during intro load, intro failure, and transition */}
+      {((isPlayingIntro && !introReady) || isTransitioning) && (
         <div
           className="absolute inset-0 flex items-center justify-center bg-black"
           style={{ zIndex: 25 }}
         >
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-12 w-12 animate-spin text-accent" />
-            <p className="text-sm text-white/70">Loading intro...</p>
-          </div>
-        </div>
-      )}
-
-      {/* Intro error overlay - auto-skips */}
-      {introFailed && isPlayingIntro && (
-        <div
-          className="absolute inset-0 flex items-center justify-center bg-black"
-          style={{ zIndex: 25 }}
-        >
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-10 w-10 animate-spin text-white/50" />
-            <p className="text-sm text-white/60">Starting video...</p>
+            <p className="text-sm text-white/70">
+              {isTransitioning ? 'Starting video...' : 'Loading...'}
+            </p>
           </div>
         </div>
       )}
