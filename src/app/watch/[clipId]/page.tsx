@@ -293,6 +293,11 @@ export default function WatchPage() {
 
     const onError = () => {
       const error = video.error
+      // Ignore "Empty src" error - it happens during cleanup
+      if (error?.message?.includes('Empty src')) {
+        console.log('[Player] Intro cleanup (expected)')
+        return
+      }
       console.error('[Player] Intro error:', error?.code, error?.message)
       setIntroFailed(true)
     }
@@ -311,13 +316,13 @@ export default function WatchPage() {
       tryPlay()
     }
 
-    // Failsafe: skip intro after 12s if it hasn't started
+    // Failsafe: skip intro after 6s if it hasn't started (was 12s - too long)
     const failsafe = setTimeout(() => {
       if (!playAttempted || video.paused) {
         console.warn('[Player] Intro failsafe triggered')
         setIntroFailed(true)
       }
-    }, 12000)
+    }, 6000)
 
     return () => {
       clearTimeout(failsafe)
@@ -335,10 +340,21 @@ export default function WatchPage() {
       if (playStateRef.current === 'intro') {
         handleTransitionToMain()
       }
-    }, 1000)
+    }, 500) // Reduced from 1000ms - skip faster
     return () => clearTimeout(timer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [introFailed, playState])
+
+  // Preload main video in background once intro starts playing
+  useEffect(() => {
+    if (!introReady || playState !== 'intro' || !mainVideoRef.current) return
+
+    const mainVideo = mainVideoRef.current
+    if (mainVideo && mainVideo.preload !== 'auto') {
+      console.log('[Player] Preloading main video in background')
+      mainVideo.preload = 'metadata' // Start loading metadata at least
+    }
+  }, [introReady, playState])
 
   // === TRANSITION FROM INTRO TO MAIN ===
   const handleTransitionToMain = useCallback(() => {
@@ -367,35 +383,62 @@ export default function WatchPage() {
     if (mainVideo) {
       // Start loading main video
       mainVideo.preload = 'auto'
-      mainVideo.load()
+
+      // Only call load() if src is not already set or video has no data
+      if (mainVideo.readyState < 2) {
+        mainVideo.load()
+      }
 
       const startMain = async () => {
+        console.log('[Player] Starting main video playback')
+        setPlayState('main') // Set state first so UI updates
+        setIsBuffering(true)
+
         const success = await attemptPlay(mainVideo)
-        setPlayState('main')
+        console.log('[Player] Main play result:', success)
 
         if (success) {
+          // Clear buffering after a short delay once playing
+          setTimeout(() => {
+            if (mainVideo && !mainVideo.paused && mainVideo.currentTime > 0) {
+              setIsBuffering(false)
+            }
+          }, 500)
           startStallDetection(mainVideo)
+        } else {
+          setIsBuffering(false)
         }
       }
 
-      // Wait for video to be ready
-      if (mainVideo.readyState >= 3) {
+      // Wait for video to be ready, but don't wait forever
+      if (mainVideo.readyState >= 2) {
+        // Has metadata, can attempt play
         startMain()
       } else {
-        const onCanPlay = () => {
+        const onLoadedData = () => {
+          mainVideo.removeEventListener('loadeddata', onLoadedData)
           mainVideo.removeEventListener('canplay', onCanPlay)
+          clearTimeout(failsafeTimer)
           startMain()
         }
+        const onCanPlay = () => {
+          mainVideo.removeEventListener('loadeddata', onLoadedData)
+          mainVideo.removeEventListener('canplay', onCanPlay)
+          clearTimeout(failsafeTimer)
+          startMain()
+        }
+        mainVideo.addEventListener('loadeddata', onLoadedData)
         mainVideo.addEventListener('canplay', onCanPlay)
 
-        // Failsafe
-        setTimeout(() => {
+        // Failsafe - reduced from 8s to 4s
+        const failsafeTimer = setTimeout(() => {
           if (playStateRef.current === 'transitioning') {
-            console.warn('[Player] Main video canplay timeout')
+            console.warn('[Player] Main video canplay timeout, attempting play anyway')
+            mainVideo.removeEventListener('loadeddata', onLoadedData)
             mainVideo.removeEventListener('canplay', onCanPlay)
             startMain()
           }
-        }, 8000)
+        }, 4000)
       }
     } else {
       setPlayState('main')
