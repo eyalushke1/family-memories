@@ -539,12 +539,12 @@ export default function TVWatchPage() {
   }, [])
 
   const handleWaiting = useCallback(() => {
-    // Debounce: only show buffering if stalled for 2+ seconds
+    // Debounce: only show buffering if stalled for 5+ seconds
     // LG WebOS fires 'waiting' frequently during normal playback
     if (bufferDebounceRef.current) clearTimeout(bufferDebounceRef.current)
     bufferDebounceRef.current = setTimeout(() => {
       setIsBuffering(true)
-    }, 2000)
+    }, 5000)
   }, [])
 
   const handlePlaying = useCallback(() => {
