@@ -207,10 +207,21 @@ export default function TVWatchPage() {
           if (video && !video.paused && !video.ended) {
             try {
               video.muted = false
-              setIsMuted(false)
-              console.log('[TV] Intro unmuted')
+              // Browser may synchronously pause when unmuting without user gesture
+              if (video.paused) {
+                console.log('[TV] Unmute caused pause, re-muting and resuming')
+                video.muted = true
+                setIsMuted(true)
+                video.play().catch(() => {})
+              } else {
+                setIsMuted(false)
+                console.log('[TV] Intro unmuted')
+              }
             } catch {
               console.warn('[TV] Unmute failed, staying muted')
+              video.muted = true
+              setIsMuted(true)
+              video.play().catch(() => {})
             }
           }
         }, 800)
@@ -375,8 +386,16 @@ export default function TVWatchPage() {
         setTimeout(() => {
           if (video && !video.paused) {
             video.muted = false
-            setIsMuted(false)
-            console.log('[TV] Main video unmuted')
+            // Browser may synchronously pause when unmuting without user gesture
+            if (video.paused) {
+              console.log('[TV] Unmute caused pause, re-muting and resuming')
+              video.muted = true
+              setIsMuted(true)
+              video.play().catch(() => {})
+            } else {
+              setIsMuted(false)
+              console.log('[TV] Main video unmuted')
+            }
           }
         }, 500)
       } catch (err) {

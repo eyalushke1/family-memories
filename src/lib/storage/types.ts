@@ -22,6 +22,7 @@ export interface StorageProvider {
   // New methods for efficient streaming of large files
   getMetadata(path: string): Promise<FileMetadata>
   downloadRange(path: string, start: number, end: number): Promise<Buffer>
+  downloadRangeStream(path: string, start: number, end: number): Promise<ReadableStream<Uint8Array>>
   getSignedUrl(path: string, expiresInSeconds?: number): Promise<string>
   getUploadUrl(path: string, contentType: string, expiresInSeconds?: number): Promise<string>
   getPublicUrl(path: string): string

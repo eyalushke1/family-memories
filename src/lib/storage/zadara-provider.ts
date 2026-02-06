@@ -112,6 +112,19 @@ export class ZadaraStorageProvider implements StorageProvider {
     return Buffer.from(bytes)
   }
 
+  async downloadRangeStream(path: string, start: number, end: number): Promise<ReadableStream<Uint8Array>> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: path,
+        Range: `bytes=${start}-${end}`,
+      })
+    )
+
+    if (!response.Body) throw new Error(`Empty response for ${path}`)
+    return response.Body.transformToWebStream() as ReadableStream<Uint8Array>
+  }
+
   async getSignedUrl(path: string, expiresInSeconds = 3600): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.config.bucketName,

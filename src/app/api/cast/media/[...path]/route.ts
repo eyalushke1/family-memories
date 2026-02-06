@@ -133,7 +133,8 @@ export async function GET(
           const { start, end } = range
           const chunkSize = end - start + 1
 
-          const data = await storage.downloadRange(storagePath, start, end)
+          // Stream the response directly instead of buffering in memory
+          const stream = await storage.downloadRangeStream(storagePath, start, end)
 
           const headers = new Headers({
             'Content-Type': contentType,
@@ -144,7 +145,7 @@ export async function GET(
           })
           addCorsHeaders(headers)
 
-          return new NextResponse(new Uint8Array(data), { status: 206, headers })
+          return new NextResponse(stream, { status: 206, headers })
         }
       }
 

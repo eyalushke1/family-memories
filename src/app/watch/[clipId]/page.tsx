@@ -164,9 +164,18 @@ export default function WatchPage() {
         if (video && !video.paused && !video.ended) {
           try {
             video.muted = false
-            console.log('[Player] Unmuted after playing')
+            // Browser may synchronously pause when unmuting without user gesture
+            if (video.paused) {
+              console.log('[Player] Unmute caused pause, re-muting and resuming')
+              video.muted = true
+              video.play().catch(() => {})
+            } else {
+              console.log('[Player] Unmuted after playing')
+            }
           } catch {
             // Stay muted - mobile browser policy
+            video.muted = true
+            video.play().catch(() => {})
           }
         }
       }, 500)

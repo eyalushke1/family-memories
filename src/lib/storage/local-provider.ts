@@ -1,5 +1,6 @@
-import { promises as fs } from 'fs'
+import { promises as fs, createReadStream } from 'fs'
 import path from 'path'
+import { Readable } from 'stream'
 import type { StorageProvider, StorageFile, UploadOptions, FileMetadata } from './types'
 
 const LOCAL_STORAGE_DIR = path.join(process.cwd(), '.local-storage')
@@ -44,6 +45,12 @@ export class LocalStorageProvider implements StorageProvider {
     } finally {
       await fileHandle.close()
     }
+  }
+
+  async downloadRangeStream(storagePath: string, start: number, end: number): Promise<ReadableStream<Uint8Array>> {
+    const fullPath = this.resolvePath(storagePath)
+    const nodeStream = createReadStream(fullPath, { start, end })
+    return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>
   }
 
   async getSignedUrl(storagePath: string): Promise<string> {

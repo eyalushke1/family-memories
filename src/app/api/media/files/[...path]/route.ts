@@ -148,9 +148,10 @@ export async function GET(
           const { start, end } = range
           const chunkSize = end - start + 1
 
-          const data = await storage.downloadRange(storagePath, start, end)
+          // Stream the response directly instead of buffering in memory
+          const stream = await storage.downloadRangeStream(storagePath, start, end)
 
-          return new NextResponse(new Uint8Array(data), {
+          return new NextResponse(stream, {
             status: 206,
             headers: {
               'Content-Type': contentType,
