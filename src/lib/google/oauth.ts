@@ -35,7 +35,7 @@ export function getAuthorizationUrl(state: string): string {
     access_type: 'offline',
     scope: GOOGLE_OAUTH_CONFIG.scopes,
     state,
-    prompt: 'consent', // Force consent to get refresh token
+    prompt: 'select_account consent', // Let user pick account + force consent for refresh token
   })
 }
 
