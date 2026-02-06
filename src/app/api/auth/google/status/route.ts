@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { isGooglePhotosConnected } from '@/lib/google/oauth'
+import { getValidAccessToken } from '@/lib/google/oauth'
 import { getProfileId } from '@/lib/api/admin-check'
 import { supabase } from '@/lib/supabase/client'
 import { successResponse, errorResponse } from '@/lib/api/response'
@@ -23,8 +23,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const connected = await isGooglePhotosConnected(profileId!)
-    return successResponse({ connected })
+    // Actually validate the token (refreshes if expired, auto-deletes if revoked)
+    const token = await getValidAccessToken(profileId!)
+    return successResponse({ connected: !!token })
   } catch (err) {
     console.error('Failed to check Google Photos status:', err)
     return errorResponse('Failed to check connection status')
