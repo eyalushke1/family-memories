@@ -161,8 +161,11 @@ export async function getValidAccessToken(profileId: string): Promise<string | n
       await storeTokens(profileId, newTokens)
       return newTokens.accessToken
     } catch (err) {
-      // Refresh failed - token may be revoked
+      // Refresh failed - token may be revoked or expired
       console.error('[OAuth Debug] Token refresh failed:', err)
+      // Auto-delete stale tokens so status correctly shows "not connected"
+      console.log('[OAuth Debug] Deleting stale tokens for profile:', profileId)
+      await deleteTokens(profileId).catch(() => {})
       return null
     }
   }
