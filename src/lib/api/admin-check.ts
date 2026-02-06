@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { supabase } from '@/lib/supabase/client'
 import { errorResponse } from './response'
 
 /**
@@ -25,4 +26,22 @@ export function checkAdmin(request: NextRequest) {
  */
 export function getProfileId(request: NextRequest): string | null {
   return request.cookies.get('fm-profile-id')?.value ?? null
+}
+
+/**
+ * Resolve a profile ID from the request cookie, or auto-select the first
+ * profile from the database if no cookie is set. Used by admin endpoints
+ * that need a profile context (e.g. Google Photos).
+ */
+export async function resolveProfileId(request: NextRequest): Promise<string | null> {
+  const cookieId = request.cookies.get('fm-profile-id')?.value
+  if (cookieId) return cookieId
+
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id')
+    .order('created_at', { ascending: true })
+    .limit(1)
+
+  return profiles && profiles.length > 0 ? profiles[0].id : null
 }

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createPickerClient } from '@/lib/google/picker-client'
-import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
+import { resolveProfileId } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 /**
@@ -8,10 +8,8 @@ import { successResponse, errorResponse } from '@/lib/api/response'
  * Create a new picker session. Returns pickerUri for user to select photos.
  */
 export async function POST(request: NextRequest) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
-  const profileId = getProfileId(request)!
+  const profileId = await resolveProfileId(request)
+  if (!profileId) return errorResponse('No profiles found', 400)
 
   try {
     const client = createPickerClient(profileId)

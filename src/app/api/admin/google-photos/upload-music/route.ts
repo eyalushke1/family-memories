@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { parseBuffer } from 'music-metadata'
 import { getStorage, MediaPaths } from '@/lib/storage'
-import { checkAdmin } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 // Sanitize filename for storage (remove special characters but keep readability)
@@ -27,9 +26,6 @@ function formatDuration(seconds: number): string {
  * Upload a music file for use in a presentation
  */
 export async function POST(request: NextRequest) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
   try {
     const formData = await request.formData()
     const file = formData.get('file') as File | null

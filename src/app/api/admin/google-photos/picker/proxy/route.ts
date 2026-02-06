@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { getValidAccessToken } from '@/lib/google/oauth'
-import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
+import { resolveProfileId } from '@/lib/api/admin-check'
 import { errorResponse } from '@/lib/api/response'
 
 /**
@@ -9,10 +9,8 @@ import { errorResponse } from '@/lib/api/response'
  * The Picker API requires OAuth token in Authorization header for all media requests.
  */
 export async function GET(request: NextRequest) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
-  const profileId = getProfileId(request)!
+  const profileId = await resolveProfileId(request)
+  if (!profileId) return errorResponse('No profiles found', 400)
   const imageUrl = request.nextUrl.searchParams.get('url')
 
   if (!imageUrl) {

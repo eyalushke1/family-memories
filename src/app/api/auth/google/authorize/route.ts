@@ -1,28 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { supabase } from '@/lib/supabase/client'
 import { validateGoogleConfig, GOOGLE_OAUTH_CONFIG } from '@/lib/google/config'
 import { getAuthorizationUrl } from '@/lib/google/oauth'
-import { getProfileId } from '@/lib/api/admin-check'
+import { resolveProfileId } from '@/lib/api/admin-check'
 
 export async function GET(request: NextRequest) {
-  let profileId = getProfileId(request)
-
-  // If no profile cookie, auto-select the first profile
+  const profileId = await resolveProfileId(request)
   if (!profileId) {
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id')
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-    if (profiles && profiles.length > 0) {
-      profileId = profiles[0].id
-    } else {
-      // No profiles exist at all — redirect back with error
-      const baseUrl = request.nextUrl.origin
-      return NextResponse.redirect(`${baseUrl}/admin/google-photos?error=no_profiles`)
-    }
+    const baseUrl = request.nextUrl.origin
+    return NextResponse.redirect(`${baseUrl}/admin/google-photos?error=no_profiles`)
   }
 
   // Validate Google config with detailed logging

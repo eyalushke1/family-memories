@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createPickerClient } from '@/lib/google/picker-client'
-import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
+import { resolveProfileId } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 interface RouteParams {
@@ -12,10 +12,8 @@ interface RouteParams {
  * Get session status. Poll until mediaItemsSet is true.
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
-  const profileId = getProfileId(request)!
+  const profileId = await resolveProfileId(request)
+  if (!profileId) return errorResponse('No profiles found', 400)
   const { sessionId } = await params
 
   try {
@@ -40,10 +38,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  * Delete/cleanup a session after use.
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
-  const profileId = getProfileId(request)!
+  const profileId = await resolveProfileId(request)
+  if (!profileId) return errorResponse('No profiles found', 400)
   const { sessionId } = await params
 
   try {

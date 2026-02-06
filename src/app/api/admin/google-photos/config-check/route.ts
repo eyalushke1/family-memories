@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server'
 import { validateGoogleConfig, GOOGLE_OAUTH_CONFIG } from '@/lib/google/config'
-import { checkAdmin } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 /**
@@ -8,9 +7,6 @@ import { successResponse, errorResponse } from '@/lib/api/response'
  * Diagnostic endpoint to verify Google OAuth configuration on Cloud Run
  */
 export async function GET(request: NextRequest) {
-  // Verify admin access
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
 
   try {
     const validation = validateGoogleConfig()
