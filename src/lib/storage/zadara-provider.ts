@@ -56,8 +56,8 @@ export class ZadaraStorageProvider implements StorageProvider {
       },
       requestHandler: new NodeHttpHandler({
         httpsAgent: agent,
-        connectionTimeout: 5000,
-        socketTimeout: 30000,
+        connectionTimeout: 10000,
+        socketTimeout: 300000, // 5 minutes — large uploads (300MB+) need time
       }),
     })
   }
