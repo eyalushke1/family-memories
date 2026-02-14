@@ -296,6 +296,36 @@ export interface Database {
           is_default?: boolean
         }
       }
+      supabase_keepalive_projects: {
+        Row: {
+          id: string
+          name: string
+          supabase_url: string
+          service_key: string
+          is_active: boolean
+          last_ping_at: string | null
+          last_ping_status: string
+          last_ping_error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          name: string
+          supabase_url: string
+          service_key: string
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          supabase_url?: string
+          service_key?: string
+          is_active?: boolean
+          last_ping_at?: string
+          last_ping_status?: string
+          last_ping_error?: string | null
+          updated_at?: string
+        }
+      }
     }
   }
 }
@@ -347,3 +377,7 @@ export type UpdateMusicTrack = Database['family_memories']['Tables']['music_trac
 export type CategoryMusicRow = Database['family_memories']['Tables']['category_music']['Row']
 export type InsertCategoryMusic = Database['family_memories']['Tables']['category_music']['Insert']
 export type UpdateCategoryMusic = Database['family_memories']['Tables']['category_music']['Update']
+
+export type KeepAliveProjectRow = Database['family_memories']['Tables']['supabase_keepalive_projects']['Row']
+export type InsertKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Insert']
+export type UpdateKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Update']
