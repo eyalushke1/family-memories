@@ -84,11 +84,19 @@ export default function KeepAlivePage() {
     }
   }
 
-  const formatTimeAgo = (dateStr: string | null) => {
+  const formatTime = (dateStr: string | null) => {
     if (!dateStr) return 'Never'
     const diff = Date.now() - new Date(dateStr).getTime()
-    const hours = Math.floor(diff / 3600000)
-    const minutes = Math.floor(diff / 60000)
+    const absDiff = Math.abs(diff)
+    const isFuture = diff < 0
+    const hours = Math.floor(absDiff / 3600000)
+    const minutes = Math.floor(absDiff / 60000)
+    if (isFuture) {
+      if (hours > 24) return `in ${Math.floor(hours / 24)}d`
+      if (hours > 0) return `in ${hours}h ${minutes % 60}m`
+      if (minutes > 0) return `in ${minutes}m`
+      return 'Soon'
+    }
     if (hours > 24) return `${Math.floor(hours / 24)}d ago`
     if (hours > 0) return `${hours}h ago`
     if (minutes > 0) return `${minutes}m ago`
@@ -162,11 +170,11 @@ export default function KeepAlivePage() {
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <span className="text-text-muted">Last run:</span>{' '}
-              <span className="text-text-primary">{formatTimeAgo(schedulerStatus.lastRunAt)}</span>
+              <span className="text-text-primary">{formatTime(schedulerStatus.lastRunAt)}</span>
             </div>
             <div>
               <span className="text-text-muted">Next run:</span>{' '}
-              <span className="text-text-primary">{schedulerStatus.nextRunAt ? formatTimeAgo(schedulerStatus.nextRunAt) : 'Pending'}</span>
+              <span className="text-text-primary">{schedulerStatus.nextRunAt ? formatTime(schedulerStatus.nextRunAt) : 'Pending'}</span>
             </div>
             <div>
               <span className="text-text-muted">Active projects:</span>{' '}
@@ -228,7 +236,7 @@ export default function KeepAlivePage() {
                   <div className="flex items-center gap-4 mt-2 text-xs text-text-muted">
                     <span className="flex items-center gap-1">
                       <Clock size={12} />
-                      Last ping: {formatTimeAgo(project.last_ping_at)}
+                      Last ping: {formatTime(project.last_ping_at)}
                     </span>
                     {project.last_ping_error && (
                       <span className="text-red-400">{project.last_ping_error}</span>
