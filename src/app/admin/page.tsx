@@ -2,37 +2,41 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Users, FolderOpen, Film } from 'lucide-react'
+import { Users, FolderOpen, Film, Zap } from 'lucide-react'
 
 interface Stats {
   profiles: number
   categories: number
   clips: number
+  keepAliveProjects: number
 }
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState<Stats>({ profiles: 0, categories: 0, clips: 0 })
+  const [stats, setStats] = useState<Stats>({ profiles: 0, categories: 0, clips: 0, keepAliveProjects: 0 })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function fetchStats() {
       try {
-        const [profilesRes, categoriesRes, clipsRes] = await Promise.all([
+        const [profilesRes, categoriesRes, clipsRes, keepAliveRes] = await Promise.all([
           fetch('/api/profiles'),
           fetch('/api/admin/categories'),
           fetch('/api/admin/clips'),
+          fetch('/api/admin/keepalive/status'),
         ])
 
-        const [profilesData, categoriesData, clipsData] = await Promise.all([
+        const [profilesData, categoriesData, clipsData, keepAliveData] = await Promise.all([
           profilesRes.json(),
           categoriesRes.json(),
           clipsRes.json(),
+          keepAliveRes.json(),
         ])
 
         setStats({
           profiles: profilesData.data?.length ?? 0,
           categories: categoriesData.data?.length ?? 0,
           clips: clipsData.data?.length ?? 0,
+          keepAliveProjects: keepAliveData.data?.projectCount ?? 0,
         })
       } catch (error) {
         console.error('Failed to fetch stats:', error)
@@ -65,6 +69,13 @@ export default function AdminDashboard() {
       href: '/admin/clips',
       icon: Film,
       color: 'bg-purple-500/20 text-purple-400',
+    },
+    {
+      label: 'Keep-Alive',
+      count: stats.keepAliveProjects,
+      href: '/admin/supabase-keepalive',
+      icon: Zap,
+      color: 'bg-yellow-500/20 text-yellow-400',
     },
   ]
 
@@ -117,6 +128,12 @@ export default function AdminDashboard() {
             className="px-4 py-2 bg-bg-card border border-border rounded-lg hover:bg-bg-card-hover transition-colors"
           >
             Manage Clips
+          </Link>
+          <Link
+            href="/admin/supabase-keepalive"
+            className="px-4 py-2 bg-bg-card border border-border rounded-lg hover:bg-bg-card-hover transition-colors"
+          >
+            Keep-Alive Monitor
           </Link>
         </div>
       </div>
