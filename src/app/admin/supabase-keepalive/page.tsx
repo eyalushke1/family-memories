@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Zap, Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Power, Eye, EyeOff } from 'lucide-react'
-import type { KeepAliveProjectSafe, PingResult, SchedulerStatus } from '@/lib/keepalive/types'
+import { Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Power, Eye, EyeOff, Timer } from 'lucide-react'
+import type { KeepAliveProjectSafe, PingResult } from '@/lib/keepalive/types'
+
+const INTERVAL_HOURS = 12
 
 export default function KeepAlivePage() {
   const [projects, setProjects] = useState<KeepAliveProjectSafe[]>([])
-  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [pinging, setPinging] = useState(false)
   const [pingResults, setPingResults] = useState<PingResult[] | null>(null)
@@ -15,15 +16,9 @@ export default function KeepAlivePage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [projectsRes, statusRes] = await Promise.all([
-        fetch('/api/admin/keepalive'),
-        fetch('/api/admin/keepalive/status'),
-      ])
-      const projectsData = await projectsRes.json()
-      const statusData = await statusRes.json()
-
-      if (projectsData.success) setProjects(projectsData.data)
-      if (statusData.success) setSchedulerStatus(statusData.data)
+      const res = await fetch('/api/admin/keepalive')
+      const data = await res.json()
+      if (data.success) setProjects(data.data)
     } catch {
       setError('Failed to load data')
     } finally {
@@ -103,6 +98,11 @@ export default function KeepAlivePage() {
     return 'Just now'
   }
 
+  const getNextPing = (lastPingAt: string | null) => {
+    if (!lastPingAt) return null
+    return new Date(new Date(lastPingAt).getTime() + INTERVAL_HOURS * 60 * 60 * 1000).toISOString()
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -113,7 +113,7 @@ export default function KeepAlivePage() {
 
   return (
     <div className="max-w-4xl">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold">Supabase Keep-Alive</h1>
         <div className="flex gap-3">
           <button
@@ -134,53 +134,15 @@ export default function KeepAlivePage() {
         </div>
       </div>
 
+      <p className="text-sm text-text-muted mb-6">
+        Auto-pings every {INTERVAL_HOURS} hours to prevent Supabase free-tier suspension.
+        Your app&apos;s own Supabase is always pinged via environment variables.
+      </p>
+
       {error && (
         <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
           {error}
           <button onClick={() => setError(null)} className="ml-2 underline">dismiss</button>
-        </div>
-      )}
-
-      {/* Scheduler Status */}
-      {schedulerStatus && (
-        <div className="mb-6 bg-bg-card border border-border rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-accent" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">Scheduler</h2>
-              <p className="text-sm text-text-muted">
-                Pings every {schedulerStatus.intervalMs / 3600000} hours to prevent project suspension
-              </p>
-            </div>
-            <div className="ml-auto">
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                schedulerStatus.schedulerRunning
-                  ? 'bg-green-500/20 text-green-400'
-                  : 'bg-yellow-500/20 text-yellow-400'
-              }`}>
-                <span className={`w-2 h-2 rounded-full ${
-                  schedulerStatus.schedulerRunning ? 'bg-green-400' : 'bg-yellow-400'
-                }`} />
-                {schedulerStatus.schedulerRunning ? 'Active' : 'Starting...'}
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <span className="text-text-muted">Last ping:</span>{' '}
-              <span className="text-text-primary">{formatTime(schedulerStatus.lastRunAt)}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Next ping:</span>{' '}
-              <span className="text-text-primary">{schedulerStatus.nextRunAt ? formatTime(schedulerStatus.nextRunAt) : 'Pending'}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Active projects:</span>{' '}
-              <span className="text-text-primary">{schedulerStatus.projectCount}</span>
-            </div>
-          </div>
         </div>
       )}
 
@@ -219,8 +181,7 @@ export default function KeepAlivePage() {
           <div className="bg-bg-card border border-border rounded-xl p-8 text-center">
             <p className="text-text-muted mb-2">No projects added yet</p>
             <p className="text-sm text-text-muted">
-              Your app&apos;s own Supabase is always pinged automatically via environment variables.
-              Add external Supabase projects here to keep them alive too.
+              Add external Supabase projects here to keep them alive.
             </p>
           </div>
         ) : (
@@ -237,6 +198,10 @@ export default function KeepAlivePage() {
                     <span className="flex items-center gap-1">
                       <Clock size={12} />
                       Last ping: {formatTime(project.last_ping_at)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Timer size={12} />
+                      Next ping: {getNextPing(project.last_ping_at) ? formatTime(getNextPing(project.last_ping_at)) : 'Pending'}
                     </span>
                     {project.last_ping_error && (
                       <span className="text-red-400">{project.last_ping_error}</span>
@@ -268,11 +233,6 @@ export default function KeepAlivePage() {
           ))
         )}
       </div>
-
-      <p className="text-xs text-text-muted mt-6">
-        Your app&apos;s own Supabase project is always pinged automatically using environment variables (no configuration needed).
-        Add additional Supabase projects above to keep them alive. Supabase free-tier projects pause after 7 days of inactivity.
-      </p>
 
       {/* Add Project Modal */}
       {showForm && (
