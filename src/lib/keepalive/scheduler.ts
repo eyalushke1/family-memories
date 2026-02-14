@@ -6,7 +6,7 @@ import type { PingResult } from './types'
 
 let intervalId: ReturnType<typeof setInterval> | null = null
 let lastRunAt: Date | null = null
-let schedulerStartedAt: Date | null = null
+let bootedAt: Date | null = null
 
 export function startScheduler(): void {
   if (intervalId) {
@@ -16,7 +16,7 @@ export function startScheduler(): void {
 
   const intervalHours = PING_INTERVAL_MS / 3600000
   console.log(`[KeepAlive] Starting scheduler (interval: ${intervalHours}h)`)
-  schedulerStartedAt = new Date()
+  bootedAt = new Date()
 
   // Run first ping cycle after a short delay to let the server fully start
   setTimeout(() => {
@@ -29,7 +29,7 @@ export function stopScheduler(): void {
   if (intervalId) {
     clearInterval(intervalId)
     intervalId = null
-    schedulerStartedAt = null
+    bootedAt = null
     console.log('[KeepAlive] Scheduler stopped')
   }
 }
@@ -44,20 +44,19 @@ export async function getSchedulerStatus() {
     }
   }
 
-  // On Cloud Run, the scheduler is always active (restarts on each cold start via instrumentation.ts)
-  // intervalId may be null during the 30s startup delay, but the scheduler is still starting
-  const isRunning = intervalId !== null || schedulerStartedAt !== null
-
   return {
-    schedulerRunning: isRunning,
+    // The scheduler auto-starts on every server boot via instrumentation.ts
+    // On Cloud Run (scale-to-zero), bootedAt confirms the scheduler was initialized
+    schedulerRunning: bootedAt !== null,
     intervalMs: PING_INTERVAL_MS,
     lastRunAt: lastRunAt?.toISOString() ?? null,
     nextRunAt: lastRunAt
       ? new Date(lastRunAt.getTime() + PING_INTERVAL_MS).toISOString()
-      : schedulerStartedAt
-        ? new Date(schedulerStartedAt.getTime() + 30_000).toISOString()
+      : bootedAt
+        ? new Date(bootedAt.getTime() + 30_000).toISOString()
         : null,
     projectCount,
+    bootedAt: bootedAt?.toISOString() ?? null,
   }
 }
 

@@ -163,22 +163,26 @@ export default function KeepAlivePage() {
                 <span className={`w-2 h-2 rounded-full ${
                   schedulerStatus.schedulerRunning ? 'bg-green-400' : 'bg-yellow-400'
                 }`} />
-                {schedulerStatus.schedulerRunning ? 'Running' : 'Stopped'}
+                {schedulerStatus.schedulerRunning ? 'Active' : 'Starting...'}
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-4 gap-4 text-sm">
             <div>
-              <span className="text-text-muted">Last run:</span>{' '}
+              <span className="text-text-muted">Last ping:</span>{' '}
               <span className="text-text-primary">{formatTime(schedulerStatus.lastRunAt)}</span>
             </div>
             <div>
-              <span className="text-text-muted">Next run:</span>{' '}
+              <span className="text-text-muted">Next ping:</span>{' '}
               <span className="text-text-primary">{schedulerStatus.nextRunAt ? formatTime(schedulerStatus.nextRunAt) : 'Pending'}</span>
             </div>
             <div>
               <span className="text-text-muted">Active projects:</span>{' '}
               <span className="text-text-primary">{schedulerStatus.projectCount}</span>
+            </div>
+            <div>
+              <span className="text-text-muted">Server booted:</span>{' '}
+              <span className="text-text-primary">{formatTime(schedulerStatus.bootedAt)}</span>
             </div>
           </div>
         </div>
