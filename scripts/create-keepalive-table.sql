@@ -14,12 +14,14 @@ CREATE TABLE IF NOT EXISTS family_memories.supabase_keepalive_projects (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Grant table-level permissions to service_role
+-- Grant table-level permissions to all PostgREST roles
 GRANT ALL ON family_memories.supabase_keepalive_projects TO service_role;
+GRANT ALL ON family_memories.supabase_keepalive_projects TO anon;
+GRANT ALL ON family_memories.supabase_keepalive_projects TO authenticated;
 
--- Enable RLS (service_role key bypasses it, blocks anon/authenticated direct access)
+-- Enable RLS
 ALTER TABLE family_memories.supabase_keepalive_projects ENABLE ROW LEVEL SECURITY;
 
--- Deny all direct access — only service_role can access (same pattern as google_oauth_tokens)
-CREATE POLICY "Deny all direct access" ON family_memories.supabase_keepalive_projects
-  FOR ALL USING (false);
+-- Allow all access (admin routes are PIN-protected at the API layer)
+CREATE POLICY "Allow all access" ON family_memories.supabase_keepalive_projects
+  FOR ALL USING (true) WITH CHECK (true);
