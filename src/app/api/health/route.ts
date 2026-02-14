@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { isSupabaseConfigured } from '@/lib/supabase/client'
+import { ensureSchedulerStarted } from '@/lib/keepalive/scheduler'
 
 export async function GET() {
+  ensureSchedulerStarted()
+
   const config = {
     supabaseConfigured: isSupabaseConfigured,
     hasSupabaseUrl: !!process.env.SUPABASE_URL,

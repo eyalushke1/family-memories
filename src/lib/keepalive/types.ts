@@ -24,5 +24,4 @@ export interface SchedulerStatus {
   lastRunAt: string | null
   nextRunAt: string | null
   projectCount: number
-  bootedAt: string | null
 }

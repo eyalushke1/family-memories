@@ -167,7 +167,7 @@ export default function KeepAlivePage() {
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <span className="text-text-muted">Last ping:</span>{' '}
               <span className="text-text-primary">{formatTime(schedulerStatus.lastRunAt)}</span>
@@ -179,10 +179,6 @@ export default function KeepAlivePage() {
             <div>
               <span className="text-text-muted">Active projects:</span>{' '}
               <span className="text-text-primary">{schedulerStatus.projectCount}</span>
-            </div>
-            <div>
-              <span className="text-text-muted">Server booted:</span>{' '}
-              <span className="text-text-primary">{formatTime(schedulerStatus.bootedAt)}</span>
             </div>
           </div>
         </div>

@@ -93,3 +93,16 @@ export async function getProjectCount(): Promise<number> {
   if (error) return 0
   return count ?? 0
 }
+
+export async function getLastPingTime(): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('supabase_keepalive_projects')
+    .select('last_ping_at')
+    .not('last_ping_at', 'is', null)
+    .order('last_ping_at', { ascending: false })
+    .limit(1)
+    .single()
+
+  if (error || !data) return null
+  return data.last_ping_at as string
+}

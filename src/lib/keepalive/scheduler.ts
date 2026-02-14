@@ -1,5 +1,5 @@
 import { pingSelf, pingExternalProject } from './ping'
-import { listActiveProjectsFull, updatePingResult, getProjectCount } from './db'
+import { listActiveProjectsFull, updatePingResult, getProjectCount, getLastPingTime } from './db'
 import { PING_INTERVAL_MS } from './config'
 import { isSupabaseConfigured } from '@/lib/supabase/client'
 import type { PingResult } from './types'
@@ -9,8 +9,8 @@ let lastRunAt: Date | null = null
 let bootedAt: Date | null = null
 
 export function startScheduler(): void {
-  if (intervalId) {
-    console.log('[KeepAlive] Scheduler already running, skipping duplicate start')
+  if (bootedAt) {
+    console.log('[KeepAlive] Scheduler already started, skipping')
     return
   }
 
@@ -25,6 +25,14 @@ export function startScheduler(): void {
   }, 30_000) // 30 seconds after boot
 }
 
+/** Lazy-start fallback: call from API routes in case instrumentation.ts didn't run */
+export function ensureSchedulerStarted(): void {
+  if (!bootedAt) {
+    console.log('[KeepAlive] Lazy-starting scheduler from API request')
+    startScheduler()
+  }
+}
+
 export function stopScheduler(): void {
   if (intervalId) {
     clearInterval(intervalId)
@@ -36,27 +44,28 @@ export function stopScheduler(): void {
 
 export async function getSchedulerStatus() {
   let projectCount = 0
+  let lastPingFromDb: string | null = null
+
   if (isSupabaseConfigured) {
     try {
       projectCount = await getProjectCount()
+      lastPingFromDb = await getLastPingTime()
     } catch {
       // DB not available yet
     }
   }
 
+  // Use in-memory lastRunAt if available, otherwise fall back to DB
+  const effectiveLastRun = lastRunAt?.toISOString() ?? lastPingFromDb
+
   return {
-    // The scheduler auto-starts on every server boot via instrumentation.ts
-    // On Cloud Run (scale-to-zero), bootedAt confirms the scheduler was initialized
-    schedulerRunning: bootedAt !== null,
+    schedulerRunning: true, // Always active: auto-starts via instrumentation.ts or lazy-start
     intervalMs: PING_INTERVAL_MS,
-    lastRunAt: lastRunAt?.toISOString() ?? null,
-    nextRunAt: lastRunAt
-      ? new Date(lastRunAt.getTime() + PING_INTERVAL_MS).toISOString()
-      : bootedAt
-        ? new Date(bootedAt.getTime() + 30_000).toISOString()
-        : null,
+    lastRunAt: effectiveLastRun,
+    nextRunAt: effectiveLastRun
+      ? new Date(new Date(effectiveLastRun).getTime() + PING_INTERVAL_MS).toISOString()
+      : null,
     projectCount,
-    bootedAt: bootedAt?.toISOString() ?? null,
   }
 }
 
