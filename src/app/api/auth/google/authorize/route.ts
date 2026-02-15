@@ -6,8 +6,12 @@ import { resolveProfileId } from '@/lib/api/admin-check'
 
 export async function GET(request: NextRequest) {
   const profileId = await resolveProfileId(request)
+  // Determine base URL: env var > redirect URI origin > forwarded host > request origin
+  const forwardedHost = request.headers.get('x-forwarded-host') || request.headers.get('host')
+  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https'
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, ''))
-    || (GOOGLE_OAUTH_CONFIG.redirectUri ? new URL(GOOGLE_OAUTH_CONFIG.redirectUri).origin : request.nextUrl.origin)
+    || (GOOGLE_OAUTH_CONFIG.redirectUri ? new URL(GOOGLE_OAUTH_CONFIG.redirectUri).origin : null)
+    || (forwardedHost ? `${forwardedProto}://${forwardedHost}` : request.nextUrl.origin)
 
   if (!profileId) {
     return NextResponse.redirect(`${baseUrl}/admin/google-photos?error=no_profiles`)

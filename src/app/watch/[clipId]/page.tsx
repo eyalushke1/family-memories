@@ -99,8 +99,15 @@ export default function WatchPage() {
           }
           setClip(found)
 
+          // Video not yet uploaded
+          if (!found.video_path || found.video_path === 'pending') {
+            setVideoError('Video is still being processed. Please try again later.')
+            setPlayState('error')
+            return
+          }
+
           // Fetch signed URL for main video in background
-          if (found.video_path && found.video_path !== 'presentation') {
+          if (found.video_path !== 'presentation') {
             fetchSignedUrl(found.video_path).then(url => {
               if (url) setMainSignedUrl(url)
             })
@@ -803,7 +810,7 @@ export default function WatchPage() {
   if (playState === 'error' || !clip) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black">
-        <p className="text-text-secondary">Clip not found</p>
+        <p className="text-text-secondary">{videoError || 'Clip not found'}</p>
         <button
           onClick={() => router.push('/browse')}
           className="text-sm text-accent hover:underline cursor-pointer"

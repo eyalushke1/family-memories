@@ -18,6 +18,12 @@ function getBaseUrl(request: NextRequest): string {
     const url = new URL(GOOGLE_OAUTH_CONFIG.redirectUri)
     return url.origin
   }
+  // Use forwarded host header (Cloud Run sets this)
+  const forwardedHost = request.headers.get('x-forwarded-host') || request.headers.get('host')
+  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https'
+  if (forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`
+  }
   // Last resort: use request URL (works on localhost)
   return request.nextUrl.origin
 }
