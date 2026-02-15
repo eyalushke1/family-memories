@@ -686,10 +686,25 @@ export default function WatchPage() {
       const errorCode = video.error.code
       const errorMessage = MEDIA_ERROR_MESSAGES[errorCode] || video.error.message || 'Unknown playback error'
       console.error('[Player] Video error:', errorCode, errorMessage)
+
+      // If format not supported (code 4) and using a signed URL,
+      // fall back to proxy URL which serves correct Content-Type headers
+      if (errorCode === 4 && mainSignedUrl && clip?.video_path) {
+        console.log('[Player] Signed URL format error, falling back to proxy')
+        setMainSignedUrl(null)
+        const proxyUrl = `/api/media/files/${clip.video_path}`
+        video.src = proxyUrl
+        video.load()
+        video.play().catch(() => {
+          setVideoError(errorMessage)
+        })
+        return
+      }
+
       setVideoError(errorMessage)
     }
     setIsBuffering(false)
-  }, [])
+  }, [mainSignedUrl, clip])
 
   const handleMainEnded = useCallback(() => {
     console.log('[Player] Video ended')

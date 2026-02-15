@@ -141,9 +141,19 @@ export class ZadaraStorageProvider implements StorageProvider {
   }
 
   async getSignedUrl(path: string, expiresInSeconds = 3600): Promise<string> {
+    // Override response Content-Type based on file extension so the browser
+    // can identify the format even if the object was uploaded without one
+    const ext = path.substring(path.lastIndexOf('.')).toLowerCase()
+    const contentTypeOverrides: Record<string, string> = {
+      '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska', '.m4v': 'video/x-m4v',
+      '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+    }
+
     const command = new GetObjectCommand({
       Bucket: this.config.bucketName,
       Key: path,
+      ...(contentTypeOverrides[ext] && { ResponseContentType: contentTypeOverrides[ext] }),
     })
     return s3GetSignedUrl(this.client, command, { expiresIn: expiresInSeconds })
   }
