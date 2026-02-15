@@ -1,13 +1,12 @@
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
-import { getSchedulerStatus, ensureSchedulerStarted } from '@/lib/keepalive/scheduler'
+import { getSchedulerStatus } from '@/lib/keepalive/scheduler'
 
 export async function GET() {
   const err = checkSupabase()
   if (err) return err
 
   try {
-    ensureSchedulerStarted()
     const status = await getSchedulerStatus()
     return successResponse(status)
   } catch (e) {

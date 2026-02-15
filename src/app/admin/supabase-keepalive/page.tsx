@@ -4,10 +4,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Trash2, RefreshCw, CheckCircle, XCircle, Clock, Power, Eye, EyeOff, Timer } from 'lucide-react'
 import type { KeepAliveProjectSafe, PingResult } from '@/lib/keepalive/types'
 
-const INTERVAL_HOURS = 12
-
 export default function KeepAlivePage() {
   const [projects, setProjects] = useState<KeepAliveProjectSafe[]>([])
+  const [intervalHours, setIntervalHours] = useState(12)
   const [loading, setLoading] = useState(true)
   const [pinging, setPinging] = useState(false)
   const [pingResults, setPingResults] = useState<PingResult[] | null>(null)
@@ -16,9 +15,16 @@ export default function KeepAlivePage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/keepalive')
-      const data = await res.json()
-      if (data.success) setProjects(data.data)
+      const [projectsRes, statusRes] = await Promise.all([
+        fetch('/api/admin/keepalive'),
+        fetch('/api/admin/keepalive/status'),
+      ])
+      const projectsData = await projectsRes.json()
+      const statusData = await statusRes.json()
+      if (projectsData.success) setProjects(projectsData.data)
+      if (statusData.success && statusData.data?.intervalMs) {
+        setIntervalHours(statusData.data.intervalMs / 3600000)
+      }
     } catch {
       setError('Failed to load data')
     } finally {
@@ -100,7 +106,7 @@ export default function KeepAlivePage() {
 
   const getNextPing = (lastPingAt: string | null) => {
     if (!lastPingAt) return null
-    return new Date(new Date(lastPingAt).getTime() + INTERVAL_HOURS * 60 * 60 * 1000).toISOString()
+    return new Date(new Date(lastPingAt).getTime() + intervalHours * 60 * 60 * 1000).toISOString()
   }
 
   if (loading) {
@@ -135,7 +141,7 @@ export default function KeepAlivePage() {
       </div>
 
       <p className="text-sm text-text-muted mb-6">
-        Auto-pings every {INTERVAL_HOURS} hours to prevent Supabase free-tier suspension.
+        Auto-pings every {intervalHours} hours to prevent Supabase free-tier suspension.
         Your app&apos;s own Supabase is always pinged via environment variables.
       </p>
 
