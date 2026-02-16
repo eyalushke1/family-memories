@@ -6,7 +6,7 @@ import { ArrowLeft, SkipForward, Loader2, Play, VolumeX } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
-import { getFormatWarning } from '@/lib/media/formats'
+import { getFormatWarning, needsTranscoding } from '@/lib/media/formats'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -58,6 +58,7 @@ export default function WatchPage() {
   const [introFailed, setIntroFailed] = useState(false)
   const [needsUserPlay, setNeedsUserPlay] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
+  const [isTranscoding, setIsTranscoding] = useState(false)
   // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -688,7 +689,7 @@ export default function WatchPage() {
     }
   }, [])
 
-  const handleMainError = useCallback(() => {
+  const handleMainError = useCallback(async () => {
     const video = mainVideoRef.current
     if (video?.error) {
       const errorCode = video.error.code
@@ -709,6 +710,34 @@ export default function WatchPage() {
         return
       }
 
+      // On-demand transcoding for AVI/MKV files
+      if (errorCode === 4 && clip?.video_path && needsTranscoding(clip.video_path)) {
+        console.log('[Player] Format needs transcoding, requesting conversion:', clip.video_path)
+        setIsTranscoding(true)
+        setVideoError(null)
+        setIsBuffering(false)
+        try {
+          const res = await fetch(`/api/media/transcode/${clip.video_path}`)
+          const json = await res.json()
+          if (json.success && json.url) {
+            console.log('[Player] Transcode complete, playing:', json.cached ? 'cached' : 'fresh')
+            video.src = json.url
+            video.load()
+            const success = await attemptPlay(video, true)
+            setIsTranscoding(false)
+            if (success) {
+              startStallDetection(video)
+            }
+            return
+          }
+        } catch (err) {
+          console.error('[Player] Transcode request failed:', err)
+        }
+        setIsTranscoding(false)
+        setVideoError('This video format could not be converted. Try re-uploading in MP4 format.')
+        return
+      }
+
       // Provide format-specific guidance for unsupported format errors
       if (errorCode === 4 && clip?.video_path) {
         const formatHint = getFormatWarning(clip.video_path)
@@ -721,7 +750,7 @@ export default function WatchPage() {
       setVideoError(errorMessage)
     }
     setIsBuffering(false)
-  }, [mainSignedUrl, clip])
+  }, [mainSignedUrl, clip, attemptPlay, startStallDetection])
 
   const handleMainEnded = useCallback(() => {
     console.log('[Player] Video ended')
@@ -952,6 +981,20 @@ export default function WatchPage() {
           <VolumeX className="h-5 w-5" />
           <span className="text-sm font-medium">Tap to unmute</span>
         </button>
+      )}
+
+      {/* Transcoding overlay */}
+      {isTranscoding && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-black"
+          style={{ zIndex: 25 }}
+        >
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-12 w-12 animate-spin text-accent" />
+            <p className="text-white font-medium">Converting video...</p>
+            <p className="text-sm text-white/50">This may take a minute. The result will be cached for next time.</p>
+          </div>
+        </div>
       )}
 
       {/* Buffering overlay */}

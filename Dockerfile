@@ -34,9 +34,15 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
+# Install ffmpeg for on-demand video transcoding (AVI/MKV → MP4)
+RUN apk add --no-cache ffmpeg
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
+
+# Create temp directory for transcoding
+RUN mkdir -p /tmp/transcode && chown nextjs:nodejs /tmp/transcode
 
 # Create public directory (may be empty)
 RUN mkdir -p public

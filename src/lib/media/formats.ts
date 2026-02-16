@@ -62,3 +62,15 @@ export function getFormatWarning(filename: string): string | null {
   const ext = '.' + filename.split('.').pop()?.toLowerCase()
   return LIMITED_SUPPORT_EXTENSIONS[ext] ?? null
 }
+
+/** Extensions that require server-side transcoding to play in browsers */
+export const TRANSCODE_EXTENSIONS = ['.avi', '.mkv']
+
+export function needsTranscoding(filename: string): boolean {
+  const ext = '.' + filename.split('.').pop()?.toLowerCase()
+  return TRANSCODE_EXTENSIONS.includes(ext)
+}
+
+export function getTranscodedPath(originalPath: string): string {
+  return `transcoded/${originalPath}.mp4`
+}
