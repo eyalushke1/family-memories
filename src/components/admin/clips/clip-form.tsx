@@ -8,7 +8,7 @@ import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { FileUploadZone } from '@/components/admin/shared/file-upload-zone'
 import { extractThumbnailFromVideo, blobToFile } from '@/lib/video/extract-thumbnail'
 import { X, Check, Wand2, AlertTriangle } from 'lucide-react'
-import { getFormatWarning } from '@/lib/media/formats'
+import { getFormatWarning, needsTranscoding } from '@/lib/media/formats'
 import type { ClipRow, CategoryRow, IntroClipRow, ProfileRow } from '@/types/database'
 
 interface ClipFormProps {
@@ -226,6 +226,111 @@ export function ClipForm({
     }
   }
 
+  // S3 multipart upload - browser uploads parts directly to storage via presigned URLs
+  const uploadMultipart = async (
+    file: File,
+    type: 'video' | 'thumbnail',
+    clipId: string,
+    onProgress?: (progress: number) => void
+  ): Promise<string> => {
+    const PART_SIZE = 10 * 1024 * 1024 // 10MB parts
+    const partCount = Math.ceil(file.size / PART_SIZE)
+
+    // 1. Initiate multipart upload and get presigned URLs for each part
+    const initRes = await fetch('/api/admin/multipart-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        id: clipId,
+        filename: file.name,
+        size: file.size,
+        partCount,
+      }),
+    })
+
+    const initData = await initRes.json()
+    if (!initData.success) {
+      throw new Error(initData.error || 'Failed to initiate multipart upload')
+    }
+
+    const { uploadId, storagePath, partUrls } = initData.data as {
+      uploadId: string
+      storagePath: string
+      partUrls: { partNumber: number; url: string }[]
+    }
+
+    // 2. Upload each part directly to storage via presigned URL
+    const completedParts: { partNumber: number; etag: string }[] = []
+    let uploadedParts = 0
+
+    try {
+      for (const { partNumber, url } of partUrls) {
+        const start = (partNumber - 1) * PART_SIZE
+        const end = Math.min(start + PART_SIZE, file.size)
+        const partBlob = file.slice(start, end)
+
+        const partRes = await fetch(url, {
+          method: 'PUT',
+          body: partBlob,
+        })
+
+        if (!partRes.ok) {
+          throw new Error(`Failed to upload part ${partNumber}/${partCount}`)
+        }
+
+        const etag = partRes.headers.get('ETag')
+        if (!etag) {
+          throw new Error(`No ETag returned for part ${partNumber}`)
+        }
+
+        completedParts.push({ partNumber, etag: etag.replace(/"/g, '') })
+        uploadedParts++
+
+        if (onProgress) {
+          onProgress((uploadedParts / partCount) * 95) // Reserve 5% for completion
+        }
+      }
+
+      // 3. Complete multipart upload
+      if (onProgress) onProgress(95)
+
+      const completeRes = await fetch('/api/admin/multipart-upload', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          id: clipId,
+          uploadId,
+          storagePath,
+          filename: file.name,
+          size: file.size,
+          parts: completedParts,
+        }),
+      })
+
+      const completeData = await completeRes.json()
+      if (!completeData.success) {
+        throw new Error(completeData.error || 'Failed to complete multipart upload')
+      }
+
+      if (onProgress) onProgress(100)
+      return completeData.data.path
+    } catch (error) {
+      // Abort the multipart upload on failure
+      try {
+        await fetch('/api/admin/multipart-upload', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId, storagePath }),
+        })
+      } catch {
+        console.error('Failed to abort multipart upload')
+      }
+      throw error
+    }
+  }
+
   // Direct upload to storage using presigned URL (fastest if CORS is configured)
   const uploadDirect = async (
     file: File,
@@ -410,35 +515,60 @@ export function ClipForm({
     const CHUNKED_THRESHOLD = 20 * 1024 * 1024 // 20MB - use chunked upload for larger files
     const sizeMB = Math.round(file.size / (1024 * 1024))
 
-    // For large files (>20MB), use chunked upload through server
-    // This bypasses CORS issues by proxying through Next.js in small chunks
+    // For large files (>20MB), try direct upload first, then multipart as fallback
     if (file.size > CHUNKED_THRESHOLD) {
-      console.log(`Using chunked upload for ${sizeMB}MB ${type} file`)
+      console.log(`Using large file upload for ${sizeMB}MB ${type} file`)
 
       try {
         // First try direct upload (fastest if CORS is configured)
         return await uploadDirect(file, type, clipId, onProgress)
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error)
-        console.warn('Direct upload failed, using chunked upload:', errorMessage)
+        console.warn('Direct upload failed, using multipart upload:', errorMessage)
 
-        // Reset progress and use chunked upload as fallback
+        // Reset progress and use S3 multipart upload as fallback
         if (onProgress) onProgress(0)
 
         try {
-          return await uploadChunked(file, type, clipId, onProgress)
-        } catch (chunkedError) {
-          const chunkedErrorMessage = chunkedError instanceof Error ? chunkedError.message : String(chunkedError)
-          throw new Error(
-            `Failed to upload ${sizeMB}MB file. ` +
-            `Error: ${chunkedErrorMessage}`
-          )
+          return await uploadMultipart(file, type, clipId, onProgress)
+        } catch (multipartError) {
+          const mpErrorMessage = multipartError instanceof Error ? multipartError.message : String(multipartError)
+          console.warn('Multipart upload failed, using chunked upload:', mpErrorMessage)
+
+          // Last resort: chunked upload through server
+          if (onProgress) onProgress(0)
+
+          try {
+            return await uploadChunked(file, type, clipId, onProgress)
+          } catch (chunkedError) {
+            const chunkedErrorMessage = chunkedError instanceof Error ? chunkedError.message : String(chunkedError)
+            throw new Error(
+              `Failed to upload ${sizeMB}MB file. ` +
+              `Error: ${chunkedErrorMessage}`
+            )
+          }
         }
       }
     }
 
     // For small files (<20MB), use regular server upload
     return await uploadViaServer(file, type, clipId, onProgress)
+  }
+
+  // Fire-and-forget: start transcoding for AVI/MKV files right after upload
+  const triggerTranscoding = (storagePath: string) => {
+    if (!needsTranscoding(storagePath)) return
+    console.log('[ClipForm] Triggering background transcoding for:', storagePath)
+    fetch(`/api/media/transcode/${storagePath}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          console.log('[ClipForm] Transcoding complete:', data.cached ? 'cached' : 'fresh')
+        } else {
+          console.warn('[ClipForm] Transcoding failed:', data.error)
+        }
+      })
+      .catch((err) => console.warn('[ClipForm] Transcoding request failed:', err))
   }
 
   const saveProfileAssociations = async (clipId: string) => {
@@ -547,6 +677,9 @@ export function ClipForm({
         )
         setVideoUploadProgress(null)
 
+        // 2b. Start background transcoding for AVI/MKV files
+        triggerTranscoding(videoStoragePath)
+
         // 3. Upload thumbnail if available (either manual or auto-generated)
         let thumbnailStoragePath: string | null = null
         if (pendingThumbnailFile.current) {
@@ -615,6 +748,9 @@ export function ClipForm({
       setVideoPath(videoStoragePath)
       setVideoPreview(`/api/media/files/${videoStoragePath}`)
       updateClip(clip.id, { video_path: videoStoragePath })
+
+      // Start background transcoding for AVI/MKV files
+      triggerTranscoding(videoStoragePath)
 
       // Auto-generate thumbnail for existing clip if none exists
       if (!clip.thumbnail_path && !thumbnailPreview) {
