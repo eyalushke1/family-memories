@@ -13,6 +13,8 @@ export async function GET(request: NextRequest) {
     .from('clips')
     .select('*')
     .eq('is_active', true)
+    .not('video_path', 'is', null)
+    .neq('video_path', 'pending')
     .order('sort_order', { ascending: true })
 
   if (categoryId) {

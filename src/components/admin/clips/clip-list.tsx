@@ -8,7 +8,7 @@ import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { ConfirmDialog } from '@/components/admin/shared/confirm-dialog'
 import { MediaImage } from '@/components/shared/media-image'
 import { PresentationEditDialog } from '@/components/admin/presentations/presentation-edit-dialog'
-import { Pencil, Trash2, Clock, Presentation } from 'lucide-react'
+import { Pencil, Trash2, Clock, Presentation, AlertTriangle } from 'lucide-react'
 import type { ClipRow, CategoryRow } from '@/types/database'
 
 interface ClipListProps {
@@ -188,7 +188,15 @@ export function ClipList({
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-medium truncate">{clip.title}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium truncate">{clip.title}</h3>
+                    {(!clip.video_path || clip.video_path === 'pending') && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400 shrink-0">
+                        <AlertTriangle size={10} />
+                        No Video
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 text-sm text-text-muted">
                     <Clock size={14} />
                     <span>{formatDuration(clip.duration_seconds)}</span>
@@ -265,9 +273,10 @@ interface ClipCardProps {
 
 function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation }: ClipCardProps) {
   const hasPresentation = !!clip.presentation?.id
+  const hasMissingVideo = !clip.video_path || clip.video_path === 'pending'
 
   return (
-    <div className="bg-bg-card border border-border rounded-xl overflow-hidden">
+    <div className={`bg-bg-card border rounded-xl overflow-hidden ${hasMissingVideo ? 'border-yellow-500/50' : 'border-border'}`}>
       <div className="aspect-video relative">
         <MediaImage
           src={
@@ -287,6 +296,12 @@ function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation }
           <div className="absolute top-2 left-2 px-2 py-1 bg-accent/90 rounded text-xs flex items-center gap-1">
             <Presentation size={12} />
             Slideshow
+          </div>
+        )}
+        {hasMissingVideo && (
+          <div className="absolute top-2 right-2 px-2 py-1 bg-yellow-500/90 text-black rounded text-xs flex items-center gap-1">
+            <AlertTriangle size={12} />
+            No Video
           </div>
         )}
         {!clip.is_active && (

@@ -67,11 +67,13 @@ export async function GET(request: NextRequest) {
 
   const allowedClipIds = new Set((clipProfiles ?? []).map((cp) => cp.clip_id))
 
-  // Fetch all active clips
+  // Fetch all active clips (exclude clips without uploaded videos)
   const { data: rawClips, error: clipError } = await supabase
     .from('clips')
     .select('*')
     .eq('is_active', true)
+    .not('video_path', 'is', null)
+    .neq('video_path', 'pending')
     .order('sort_order', { ascending: true })
 
   if (clipError) {
