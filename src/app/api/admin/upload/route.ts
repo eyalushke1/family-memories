@@ -4,6 +4,7 @@ import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
+import { getContentType, ALLOWED_VIDEO_MIME_TYPES, VIDEO_EXTENSIONS, IMAGE_CONTENT_TYPES } from '@/lib/media/formats'
 
 // Route segment config for large file uploads
 export const dynamic = 'force-dynamic'
@@ -18,28 +19,6 @@ function jsonErrorResponse(message: string, status: number): NextResponse {
 }
 
 type UploadType = 'avatar' | 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail'
-
-function getContentType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const mimeTypes: Record<string, string> = {
-    // Images
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    heic: 'image/heic',
-    heif: 'image/heif',
-    // Videos
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    mov: 'video/quicktime',
-    avi: 'video/x-msvideo',
-    mkv: 'video/x-matroska',
-    m4v: 'video/x-m4v',
-  }
-  return mimeTypes[ext || ''] || 'application/octet-stream'
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -92,14 +71,10 @@ export async function POST(request: NextRequest) {
       return errorResponse('File too large. Maximum size is 500MB.', 413)
     }
 
-  // Validate file type
-  const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif']
-  const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/x-m4v', 'video/avi']
-
-  // Also check by file extension for cases where MIME type detection fails
+  // Validate file type using shared format constants
+  const allowedImageTypes = Object.values(IMAGE_CONTENT_TYPES)
+  const imageExtensions = Object.keys(IMAGE_CONTENT_TYPES).map(e => e.slice(1))
   const ext = file.name.split('.').pop()?.toLowerCase()
-  const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif']
-  const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v']
 
   if (type === 'avatar' || type === 'thumbnail' || type === 'animated-thumbnail' || type === 'intro-thumbnail') {
     const isValidImage = allowedImageTypes.includes(file.type) || imageExtensions.includes(ext || '')
@@ -109,9 +84,9 @@ export async function POST(request: NextRequest) {
   }
 
   if (type === 'video' || type === 'intro-video') {
-    const isValidVideo = allowedVideoTypes.includes(file.type) || videoExtensions.includes(ext || '')
+    const isValidVideo = ALLOWED_VIDEO_MIME_TYPES.includes(file.type) || VIDEO_EXTENSIONS.includes(ext || '')
     if (!isValidVideo) {
-      return errorResponse('Invalid video type. Allowed: mp4, webm, mov, avi, mkv, m4v', 400)
+      return errorResponse(`Invalid video type. Allowed: ${VIDEO_EXTENSIONS.join(', ')}`, 400)
     }
   }
 

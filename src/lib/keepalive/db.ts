@@ -72,8 +72,8 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function updatePingResult(
   id: string, status: 'success' | 'error', errorMsg?: string
-): Promise<void> {
-  await supabase
+): Promise<string | null> {
+  const { error } = await supabase
     .from('supabase_keepalive_projects')
     .update({
       last_ping_at: new Date().toISOString(),
@@ -82,6 +82,12 @@ export async function updatePingResult(
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
+
+  if (error) {
+    console.error(`[KeepAlive DB] updatePingResult failed for ${id}:`, error.message)
+    return error.message
+  }
+  return null
 }
 
 export async function getProjectCount(): Promise<number> {

@@ -1,41 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
+import { getContentType, isStreamingType } from '@/lib/media/formats'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
-
-const CONTENT_TYPES: Record<string, string> = {
-  // Images
-  '.webp': 'image/webp',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.heic': 'image/heic',
-  '.heif': 'image/heif',
-  // Videos
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mov': 'video/quicktime',
-  '.avi': 'video/x-msvideo',
-  '.mkv': 'video/x-matroska',
-  '.m4v': 'video/x-m4v',
-  // Audio
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-}
-
-function getContentType(filePath: string): string {
-  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
-  return CONTENT_TYPES[ext] ?? 'application/octet-stream'
-}
-
-function isStreamingType(contentType: string): boolean {
-  return contentType.startsWith('video/') || contentType.startsWith('audio/')
-}
 
 // Chunk size when browser sends open-ended range (e.g. bytes=0-)
 // 2MB chunks for faster initial load and smoother streaming

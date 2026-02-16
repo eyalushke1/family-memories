@@ -12,8 +12,8 @@ export async function getSchedulerStatus() {
     try {
       projectCount = await getProjectCount()
       lastPingFromDb = await getLastPingTime()
-    } catch {
-      // DB not available yet
+    } catch (err) {
+      console.error('[KeepAlive] Failed to get status from DB:', err)
     }
   }
 
@@ -32,17 +32,19 @@ export async function runPingCycle(): Promise<PingResult[]> {
   console.log('[KeepAlive] Starting ping cycle...')
   const results: PingResult[] = []
 
-  // Step 1: Always ping self first (env vars, no DB dependency)
-  const selfResult = await pingSelf()
-  results.push(selfResult)
-  console.log(`[KeepAlive] Self: ${selfResult.status}${selfResult.error ? ` (${selfResult.error})` : ''} [${selfResult.responseTimeMs}ms]`)
-
-  if (selfResult.status === 'error') {
-    console.error('[KeepAlive] Self-ping failed, skipping DB projects')
-    return results
+  // Step 1: Ping self (env vars, no DB dependency)
+  // This keeps the app's own Supabase alive even if DB operations fail
+  try {
+    const selfResult = await pingSelf()
+    results.push(selfResult)
+    console.log(`[KeepAlive] Self: ${selfResult.status}${selfResult.error ? ` — ${selfResult.error}` : ''} [${selfResult.responseTimeMs}ms]`)
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[KeepAlive] Self-ping threw:', error)
+    results.push({ id: 'self', name: 'Self (this app)', status: 'error', error, responseTimeMs: 0 })
   }
 
-  // Step 2: Ping all active projects from DB
+  // Step 2: Ping all active projects from DB (independent of self-ping result)
   if (!isSupabaseConfigured) {
     console.log('[KeepAlive] Supabase not configured, skipping DB projects')
     return results
@@ -50,21 +52,31 @@ export async function runPingCycle(): Promise<PingResult[]> {
 
   try {
     const projects = await listActiveProjectsFull()
-    console.log(`[KeepAlive] Pinging ${projects.length} project(s)...`)
+    console.log(`[KeepAlive] Found ${projects.length} active project(s) to ping`)
 
     for (const project of projects) {
-      const result = await pingExternalProject(
-        project.id, project.name, project.supabase_url, project.service_key
-      )
-      results.push(result)
-      console.log(`[KeepAlive] ${project.name}: ${result.status}${result.error ? ` (${result.error})` : ''} [${result.responseTimeMs}ms]`)
+      try {
+        const result = await pingExternalProject(
+          project.id, project.name, project.supabase_url, project.service_key
+        )
+        results.push(result)
+        console.log(`[KeepAlive] ${project.name}: ${result.status}${result.error ? ` — ${result.error}` : ''} [${result.responseTimeMs}ms]`)
 
-      await updatePingResult(project.id, result.status, result.error)
+        // Update DB with result
+        const updateError = await updatePingResult(project.id, result.status, result.error)
+        if (updateError) {
+          console.error(`[KeepAlive] Failed to update DB for ${project.name}:`, updateError)
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err.message : 'Unknown error'
+        console.error(`[KeepAlive] Error pinging ${project.name}:`, error)
+        results.push({ id: project.id, name: project.name, status: 'error', error, responseTimeMs: 0 })
+      }
     }
   } catch (err) {
-    console.error('[KeepAlive] Error during ping cycle:', err)
+    console.error('[KeepAlive] Failed to fetch projects from DB:', err)
   }
 
-  console.log('[KeepAlive] Ping cycle complete')
+  console.log(`[KeepAlive] Ping cycle complete — ${results.length} result(s)`)
   return results
 }

@@ -4,28 +4,9 @@ import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
+import { getContentType } from '@/lib/media/formats'
 
 type UploadType = 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail' | 'avatar'
-
-function getContentType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const mimeTypes: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    heic: 'image/heic',
-    heif: 'image/heif',
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    mov: 'video/quicktime',
-    avi: 'video/x-msvideo',
-    mkv: 'video/x-matroska',
-    m4v: 'video/x-m4v',
-  }
-  return mimeTypes[ext || ''] || 'application/octet-stream'
-}
 
 export async function POST(request: NextRequest) {
   try {

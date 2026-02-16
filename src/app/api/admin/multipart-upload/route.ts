@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { MediaPaths } from '@/lib/storage/media-paths'
+import { getContentType } from '@/lib/media/formats'
 
 // Route config
 export const dynamic = 'force-dynamic'
@@ -36,19 +37,6 @@ function getS3Client(): S3Client | null {
       secretAccessKey,
     },
   })
-}
-
-function getContentType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const mimeTypes: Record<string, string> = {
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    mov: 'video/quicktime',
-    avi: 'video/x-msvideo',
-    mkv: 'video/x-matroska',
-    m4v: 'video/x-m4v',
-  }
-  return mimeTypes[ext || ''] || 'application/octet-stream'
 }
 
 // POST: Initiate multipart upload and get presigned URLs for parts

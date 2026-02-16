@@ -4,6 +4,7 @@ import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
+import { getContentType } from '@/lib/media/formats'
 
 // Route config - each chunk is small so we don't need long timeouts
 export const dynamic = 'force-dynamic'
@@ -33,23 +34,6 @@ function cleanupOldSessions() {
       uploadSessions.delete(sessionId)
     }
   }
-}
-
-function getContentType(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const mimeTypes: Record<string, string> = {
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    mov: 'video/quicktime',
-    avi: 'video/x-msvideo',
-    mkv: 'video/x-matroska',
-    m4v: 'video/x-m4v',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-  }
-  return mimeTypes[ext || ''] || 'application/octet-stream'
 }
 
 // POST: Initialize upload session OR upload a chunk

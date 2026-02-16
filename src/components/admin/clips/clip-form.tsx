@@ -7,7 +7,8 @@ import { FormField, Input, Textarea, Select } from '@/components/admin/shared/fo
 import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { FileUploadZone } from '@/components/admin/shared/file-upload-zone'
 import { extractThumbnailFromVideo, blobToFile } from '@/lib/video/extract-thumbnail'
-import { X, Check, Wand2 } from 'lucide-react'
+import { X, Check, Wand2, AlertTriangle } from 'lucide-react'
+import { getFormatWarning } from '@/lib/media/formats'
 import type { ClipRow, CategoryRow, IntroClipRow, ProfileRow } from '@/types/database'
 
 interface ClipFormProps {
@@ -55,6 +56,7 @@ export function ClipForm({
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null)
   const [thumbnailUploadProgress, setThumbnailUploadProgress] = useState<number | null>(null)
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const [formatWarning, setFormatWarning] = useState<string | null>(null)
 
   // Store pending files for new clips
   const pendingVideoFile = useRef<File | null>(null)
@@ -584,6 +586,10 @@ export function ClipForm({
   }
 
   const handleVideoUpload = async (file: File) => {
+    // Check for format compatibility warning
+    const warning = getFormatWarning(file.name)
+    setFormatWarning(warning)
+
     if (!clip?.id) {
       // For new clips, store the file and show local preview
       pendingVideoFile.current = file
@@ -708,11 +714,18 @@ export function ClipForm({
                     setVideoPath('')
                     setVideoPreview(null)
                     pendingVideoFile.current = null
+                    setFormatWarning(null)
                   }}
                   label="Drop video file here"
                   maxSizeMB={2048}
                   uploadProgress={videoUploadProgress}
                 />
+                {formatWarning && (
+                  <div className="flex items-start gap-2 mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
+                    <p className="text-xs text-yellow-400">{formatWarning}. MP4 is recommended for best compatibility.</p>
+                  </div>
+                )}
               </FormField>
 
               <FormField label="Thumbnail">

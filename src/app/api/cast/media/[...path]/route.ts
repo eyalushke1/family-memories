@@ -1,34 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
+import { getContentType, isStreamingType } from '@/lib/media/formats'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
-
-const CONTENT_TYPES: Record<string, string> = {
-  '.webp': 'image/webp',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.gif': 'image/gif',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mov': 'video/quicktime',
-  '.avi': 'video/x-msvideo',
-  '.mkv': 'video/x-matroska',
-  '.m4v': 'video/x-m4v',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-}
-
-function getContentType(filePath: string): string {
-  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase()
-  return CONTENT_TYPES[ext] ?? 'application/octet-stream'
-}
-
-function isStreamingType(contentType: string): boolean {
-  return contentType.startsWith('video/') || contentType.startsWith('audio/')
-}
 
 function addCorsHeaders(headers: Headers): Headers {
   headers.set('Access-Control-Allow-Origin', '*')

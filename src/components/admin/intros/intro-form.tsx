@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import { FormField, Input, Textarea } from '@/components/admin/shared/form-field'
 import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { FileUploadZone } from '@/components/admin/shared/file-upload-zone'
-import { X } from 'lucide-react'
+import { X, AlertTriangle } from 'lucide-react'
+import { getFormatWarning } from '@/lib/media/formats'
 import type { IntroClipRow } from '@/types/database'
 
 interface IntroFormProps {
@@ -29,6 +30,7 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [formatWarning, setFormatWarning] = useState<string | null>(null)
 
   const pendingVideoFile = useRef<File | null>(null)
   const pendingThumbnailFile = useRef<File | null>(null)
@@ -154,6 +156,9 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
   }
 
   const handleVideoUpload = async (file: File) => {
+    const warning = getFormatWarning(file.name)
+    setFormatWarning(warning)
+
     if (!intro?.id) {
       pendingVideoFile.current = file
       setVideoPreview(URL.createObjectURL(file))
@@ -241,10 +246,17 @@ export function IntroForm({ intro, onClose, onSaved }: IntroFormProps) {
                   onClear={() => {
                     setVideoPreview(null)
                     pendingVideoFile.current = null
+                    setFormatWarning(null)
                   }}
                   label="Drop intro video here"
                   maxSizeMB={2048}
                 />
+                {formatWarning && (
+                  <div className="flex items-start gap-2 mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <AlertTriangle size={14} className="text-yellow-500 mt-0.5 shrink-0" />
+                    <p className="text-xs text-yellow-400">{formatWarning}. MP4 is recommended for best compatibility.</p>
+                  </div>
+                )}
               </FormField>
 
               <FormField label="Thumbnail">

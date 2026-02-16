@@ -6,6 +6,7 @@ import { ArrowLeft, SkipForward, Loader2, Play, VolumeX } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
+import { getFormatWarning } from '@/lib/media/formats'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -706,6 +707,15 @@ export default function WatchPage() {
           setVideoError(errorMessage)
         })
         return
+      }
+
+      // Provide format-specific guidance for unsupported format errors
+      if (errorCode === 4 && clip?.video_path) {
+        const formatHint = getFormatWarning(clip.video_path)
+        if (formatHint) {
+          setVideoError(`${formatHint}. Try re-uploading in MP4 format for best compatibility.`)
+          return
+        }
       }
 
       setVideoError(errorMessage)
