@@ -63,9 +63,12 @@ export async function runPingCycle(): Promise<PingResult[]> {
         console.log(`[KeepAlive] ${project.name}: ${result.status}${result.error ? ` — ${result.error}` : ''} [${result.responseTimeMs}ms]`)
 
         // Update DB with result
+        console.log(`[KeepAlive] Updating DB for ${project.name} (id=${project.id}) with status=${result.status}`)
         const updateError = await updatePingResult(project.id, result.status, result.error)
         if (updateError) {
-          console.error(`[KeepAlive] Failed to update DB for ${project.name}:`, updateError)
+          console.error(`[KeepAlive] DB update FAILED for ${project.name}:`, updateError)
+        } else {
+          console.log(`[KeepAlive] DB update OK for ${project.name}`)
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Unknown error'
