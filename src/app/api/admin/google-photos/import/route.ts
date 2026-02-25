@@ -33,9 +33,31 @@ interface ImportRequest {
 
 // Download with retry settings
 const DOWNLOAD_CONFIG = {
-  retries: 3,
+  retries: 2,
   retryDelay: 1000,
   timeoutMs: 30000, // 30s per file download
+  concurrency: 5,   // Parallel downloads
+}
+
+// Run async tasks with concurrency limit
+async function parallelLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let index = 0
+
+  async function worker() {
+    while (index < items.length) {
+      const i = index++
+      results[i] = await fn(items[i])
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  await Promise.all(workers)
+  return results
 }
 
 export async function POST(request: NextRequest) {
@@ -64,102 +86,95 @@ export async function POST(request: NextRequest) {
     const importedItems: { googleMediaId: string; storagePath: string; filename: string }[] = []
     const failedItems: { googleMediaId: string; error: string }[] = []
 
-    // Download and upload each item with retry logic
-    for (const item of mediaItems) {
-      // Check if already imported
-      const { data: existing } = await supabase
-        .from('google_photos_imports')
-        .select('storage_path')
-        .eq('google_media_id', item.id)
-        .single()
+    // Download and upload items in parallel with concurrency limit
+    console.log(`[Import] Starting parallel download of ${mediaItems.length} items (concurrency: ${DOWNLOAD_CONFIG.concurrency})`)
 
-      if (existing) {
-        // Already imported, add to list
-        importedItems.push({
-          googleMediaId: item.id,
-          storagePath: existing.storage_path,
-          filename: item.filename,
-        })
-        continue
-      }
+    type DownloadResult = { type: 'success'; googleMediaId: string; storagePath: string; filename: string } | { type: 'failed'; googleMediaId: string; error: string }
 
-      // Build download URL with appropriate suffix
-      // Picker API requires OAuth token in Authorization header
-      const downloadUrl = item.isVideo
-        ? `${item.baseUrl}=dv`  // Download video
-        : `${item.baseUrl}=d`   // Download image
+    const results = await parallelLimit<PickerMediaItem, DownloadResult>(
+      mediaItems,
+      DOWNLOAD_CONFIG.concurrency,
+      async (item) => {
+        // Check if already imported
+        const { data: existing } = await supabase
+          .from('google_photos_imports')
+          .select('storage_path')
+          .eq('google_media_id', item.id)
+          .single()
 
-      // Download with retry
-      let downloaded = false
-      let lastError = ''
+        if (existing) {
+          return { type: 'success', googleMediaId: item.id, storagePath: existing.storage_path, filename: item.filename }
+        }
 
-      for (let attempt = 0; attempt < DOWNLOAD_CONFIG.retries; attempt++) {
-        try {
-          // Fetch with OAuth token (Picker API requires authentication)
-          const controller = new AbortController()
-          const downloadTimeout = setTimeout(() => controller.abort(), DOWNLOAD_CONFIG.timeoutMs)
-          const response = await fetch(downloadUrl, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-            signal: controller.signal,
-          })
-          clearTimeout(downloadTimeout)
+        // Build download URL with appropriate suffix
+        const downloadUrl = item.isVideo
+          ? `${item.baseUrl}=dv`
+          : `${item.baseUrl}=d`
 
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-          }
+        // Download with retry
+        let lastError = ''
 
-          const buffer = Buffer.from(await response.arrayBuffer())
+        for (let attempt = 0; attempt < DOWNLOAD_CONFIG.retries; attempt++) {
+          try {
+            const controller = new AbortController()
+            const downloadTimeout = setTimeout(() => controller.abort(), DOWNLOAD_CONFIG.timeoutMs)
+            const response = await fetch(downloadUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              signal: controller.signal,
+            })
+            clearTimeout(downloadTimeout)
 
-          // Generate storage path
-          const creationDate = new Date(item.createTime)
-          const year = creationDate.getFullYear().toString()
-          const month = (creationDate.getMonth() + 1).toString().padStart(2, '0')
-          const uniqueFilename = `${uuidv4()}-${item.filename}`
-          const storagePath = MediaPaths.googlePhotosImport(year, month, uniqueFilename)
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+            }
 
-          // Upload to storage
-          await storage.upload(storagePath, buffer, {
-            contentType: item.mimeType,
-          })
+            const buffer = Buffer.from(await response.arrayBuffer())
 
-          // Record import in database
-          await supabase.from('google_photos_imports').insert({
-            google_media_id: item.id,
-            storage_path: storagePath,
-            original_filename: item.filename,
-            media_type: item.isVideo ? 'video' : 'image',
-            imported_by: profileId,
-          })
+            // Generate storage path
+            const creationDate = new Date(item.createTime)
+            const year = creationDate.getFullYear().toString()
+            const month = (creationDate.getMonth() + 1).toString().padStart(2, '0')
+            const uniqueFilename = `${uuidv4()}-${item.filename}`
+            const storagePath = MediaPaths.googlePhotosImport(year, month, uniqueFilename)
 
-          importedItems.push({
-            googleMediaId: item.id,
-            storagePath,
-            filename: item.filename,
-          })
+            // Upload to storage
+            await storage.upload(storagePath, buffer, { contentType: item.mimeType })
 
-          downloaded = true
-          break
-        } catch (err) {
-          lastError = err instanceof Error ? err.message : 'Unknown error'
-          console.error(`Download attempt ${attempt + 1} failed for ${item.filename}:`, lastError)
+            // Record import in database
+            await supabase.from('google_photos_imports').insert({
+              google_media_id: item.id,
+              storage_path: storagePath,
+              original_filename: item.filename,
+              media_type: item.isVideo ? 'video' : 'image',
+              imported_by: profileId,
+            })
 
-          // Exponential backoff
-          if (attempt < DOWNLOAD_CONFIG.retries - 1) {
-            const delay = DOWNLOAD_CONFIG.retryDelay * Math.pow(2, attempt)
-            await new Promise(resolve => setTimeout(resolve, delay))
+            console.log(`[Import] Downloaded: ${item.filename}`)
+            return { type: 'success', googleMediaId: item.id, storagePath, filename: item.filename }
+          } catch (err) {
+            lastError = err instanceof Error ? err.message : 'Unknown error'
+            console.error(`[Import] Attempt ${attempt + 1} failed for ${item.filename}: ${lastError}`)
+
+            if (attempt < DOWNLOAD_CONFIG.retries - 1) {
+              await new Promise(resolve => setTimeout(resolve, DOWNLOAD_CONFIG.retryDelay * Math.pow(2, attempt)))
+            }
           }
         }
-      }
 
-      if (!downloaded) {
-        failedItems.push({
-          googleMediaId: item.id,
-          error: lastError,
-        })
+        return { type: 'failed', googleMediaId: item.id, error: lastError }
+      }
+    )
+
+    // Separate results
+    for (const result of results) {
+      if (result.type === 'success') {
+        importedItems.push({ googleMediaId: result.googleMediaId, storagePath: result.storagePath, filename: result.filename })
+      } else {
+        failedItems.push({ googleMediaId: result.googleMediaId, error: result.error })
       }
     }
+
+    console.log(`[Import] Complete: ${importedItems.length} succeeded, ${failedItems.length} failed`)
 
     // If creating a presentation, create the clip and presentation records
     let clipId: string | undefined
