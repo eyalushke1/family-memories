@@ -57,14 +57,21 @@ export async function GET(
     sortOrder: slide.sort_order,
   }))
 
+  // Build music URLs array from background_music_paths (prefer) or fall back to single path
+  const musicPaths: string[] = presentation.background_music_paths && presentation.background_music_paths.length > 0
+    ? presentation.background_music_paths
+    : presentation.background_music_path ? [presentation.background_music_path] : []
+
+  const backgroundMusicUrls = musicPaths.map((p: string) => `/api/media/files/${p}`)
+
   return successResponse({
     id: presentation.id,
     slideDurationMs: presentation.slide_duration_ms,
     transitionType: presentation.transition_type,
     transitionDurationMs: presentation.transition_duration_ms,
-    backgroundMusicUrl: presentation.background_music_path
-      ? `/api/media/files/${presentation.background_music_path}`
-      : null,
+    // Keep single URL for backward compat
+    backgroundMusicUrl: backgroundMusicUrls[0] || null,
+    backgroundMusicUrls,
     musicFadeOutMs: presentation.music_fade_out_ms || 3000,
     muteVideoAudio: presentation.mute_video_audio ?? true,
     slides: slidesWithUrls,

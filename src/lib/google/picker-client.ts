@@ -98,10 +98,15 @@ export function createPickerClient(profileId: string) {
 
     // Handle empty responses (like DELETE)
     const text = await response.text()
-    if (!text) {
+    if (!text || !text.trim()) {
       return {} as T
     }
-    return JSON.parse(text)
+    try {
+      return JSON.parse(text)
+    } catch {
+      console.error('Failed to parse Picker API response:', text.substring(0, 200))
+      throw new Error(`Invalid JSON from Picker API: ${text.substring(0, 100)}`)
+    }
   }
 
   return {

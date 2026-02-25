@@ -77,10 +77,10 @@ export function ImportDialog({
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
 
-  // Music state - simplified
+  // Music state - supports multiple tracks
   const [uploadedMusicFiles, setUploadedMusicFiles] = useState<UploadedMusicFile[]>([])
-  const [selectedMusicPath, setSelectedMusicPath] = useState<string | null>(null)
-  const [newUploadedMusic, setNewUploadedMusic] = useState<NewUploadedMusic | null>(null)
+  const [selectedMusicPaths, setSelectedMusicPaths] = useState<string[]>([])
+  const [newUploadedMusicList, setNewUploadedMusicList] = useState<NewUploadedMusic[]>([])
   const [musicFadeOutMs, setMusicFadeOutMs] = useState(3000)
   const [loadingMusic, setLoadingMusic] = useState(false)
   const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null)
@@ -188,17 +188,17 @@ export function ImportDialog({
         previewAudio.pause()
         previewAudio.src = ''
       }
-      if (newUploadedMusic?.previewUrl) {
-        URL.revokeObjectURL(newUploadedMusic.previewUrl)
+      for (const m of newUploadedMusicList) {
+        URL.revokeObjectURL(m.previewUrl)
       }
     }
-  }, [previewAudio, newUploadedMusic])
+  }, [previewAudio, newUploadedMusicList])
 
   const imageCount = orderedItems.filter((m) => !m.isVideo).length
   const videoCount = orderedItems.filter((m) => m.isVideo).length
 
-  const toggleMusicPreview = (path: string, isNew = false) => {
-    const trackId = isNew ? 'new-upload' : path
+  const toggleMusicPreview = (path: string, newUploadIndex?: number) => {
+    const trackId = newUploadIndex !== undefined ? `new-upload-${newUploadIndex}` : path
 
     if (playingMusicPath === trackId) {
       previewAudio?.pause()
@@ -207,7 +207,9 @@ export function ImportDialog({
       if (previewAudio) {
         previewAudio.pause()
       }
-      const audioSrc = isNew ? newUploadedMusic!.previewUrl : `/api/media/files/${path}`
+      const audioSrc = newUploadIndex !== undefined
+        ? newUploadedMusicList[newUploadIndex].previewUrl
+        : `/api/media/files/${path}`
       const audio = new Audio(audioSrc)
       audio.volume = 0.5
       audio.play()
@@ -226,18 +228,30 @@ export function ImportDialog({
       return
     }
 
-    if (newUploadedMusic?.previewUrl) {
-      URL.revokeObjectURL(newUploadedMusic.previewUrl)
-    }
-
     const previewUrl = URL.createObjectURL(file)
-    setNewUploadedMusic({
-      name: file.name.replace(/\.[^/.]+$/, ''),
-      file,
-      previewUrl,
-    })
-    setSelectedMusicPath(null)
+    setNewUploadedMusicList((prev) => [
+      ...prev,
+      { name: file.name.replace(/\.[^/.]+$/, ''), file, previewUrl },
+    ])
     setError('')
+    // Reset input so same file can be re-added
+    if (musicInputRef.current) {
+      musicInputRef.current.value = ''
+    }
+  }
+
+  const removeNewUpload = (index: number) => {
+    setNewUploadedMusicList((prev) => {
+      const removed = prev[index]
+      URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  const toggleExistingMusicPath = (path: string) => {
+    setSelectedMusicPaths((prev) =>
+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
+    )
   }
 
   const handleCreateCategory = async () => {
@@ -279,26 +293,31 @@ export function ImportDialog({
 
     try {
       const selectedItems = orderedItems
-      let musicPath: string | null = null
+      const musicPaths: string[] = [...selectedMusicPaths]
 
-      // If user uploaded new music, upload it first
-      if (newUploadedMusic) {
-        setProgress('Uploading music...')
-        const formData = new FormData()
-        formData.append('file', newUploadedMusic.file)
+      // Upload all new music files
+      if (newUploadedMusicList.length > 0) {
+        for (let i = 0; i < newUploadedMusicList.length; i++) {
+          const musicFile = newUploadedMusicList[i]
+          setProgress(`Uploading music (${i + 1}/${newUploadedMusicList.length})...`)
+          const formData = new FormData()
+          formData.append('file', musicFile.file)
 
-        const uploadRes = await fetch('/api/admin/google-photos/upload-music', {
-          method: 'POST',
-          body: formData,
-        })
-        const uploadData = await uploadRes.json()
+          const uploadRes = await fetch('/api/admin/google-photos/upload-music', {
+            method: 'POST',
+            body: formData,
+          })
+          if (!uploadRes.ok) {
+            const text = await uploadRes.text()
+            throw new Error(`Music upload failed (${uploadRes.status}): ${text.substring(0, 100)}`)
+          }
+          const uploadData = await uploadRes.json()
 
-        if (!uploadData.success) {
-          throw new Error(uploadData.error || 'Failed to upload music')
+          if (!uploadData.success) {
+            throw new Error(uploadData.error || 'Failed to upload music')
+          }
+          musicPaths.push(uploadData.data.path)
         }
-        musicPath = uploadData.data.path
-      } else if (selectedMusicPath) {
-        musicPath = selectedMusicPath
       }
 
       setProgress('Creating presentation...')
@@ -313,11 +332,19 @@ export function ImportDialog({
           categoryId,
           slideDurationMs,
           transitionType: useRandomTransition ? 'random' : transitionType,
-          backgroundMusicPath: musicPath,
+          backgroundMusicPath: musicPaths[0] || null,
+          backgroundMusicPaths: musicPaths,
           musicFadeOutMs,
           muteVideoAudio,
         }),
       })
+
+      // Handle non-JSON responses (e.g. Cloud Run "upstream request timeout")
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        const text = await res.text()
+        throw new Error(res.ok ? 'Unexpected response from server' : `Server error (${res.status}): ${text.substring(0, 100)}`)
+      }
 
       const data = await res.json()
 
@@ -336,7 +363,8 @@ export function ImportDialog({
     }
   }
 
-  const hasMusic = selectedMusicPath || newUploadedMusic
+  const hasMusic = selectedMusicPaths.length > 0 || newUploadedMusicList.length > 0
+  const totalMusicCount = selectedMusicPaths.length + newUploadedMusicList.length
 
   return (
     <div
@@ -613,11 +641,16 @@ export function ImportDialog({
               </div>
             )}
 
-            {/* Background Music - Simplified */}
+            {/* Background Music - Multiple tracks */}
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-3">
                 <Music size={16} />
                 Background Music
+                {totalMusicCount > 0 && (
+                  <span className="text-xs bg-accent/20 text-accent px-2 py-0.5 rounded-full">
+                    {totalMusicCount} track{totalMusicCount > 1 ? 's' : ''} selected
+                  </span>
+                )}
               </label>
 
               {/* Upload music button */}
@@ -638,88 +671,68 @@ export function ImportDialog({
                 <div className="space-y-2 max-h-56 overflow-y-auto">
                   {/* Upload new music option */}
                   <div
-                    onClick={() => !newUploadedMusic && musicInputRef.current?.click()}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border border-dashed transition-all ${
-                      newUploadedMusic
-                        ? 'bg-green-500/20 border-green-500 text-white'
-                        : 'bg-white/5 border-white/20 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/40 cursor-pointer'
-                    }`}
+                    onClick={() => musicInputRef.current?.click()}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-dashed transition-all bg-white/5 border-white/20 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/40 cursor-pointer"
                   >
-                    <div
-                      onClick={(e) => {
-                        if (newUploadedMusic) {
-                          e.stopPropagation()
-                          musicInputRef.current?.click()
-                        }
-                      }}
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        newUploadedMusic ? 'bg-green-500/30 cursor-pointer hover:bg-green-500/40' : 'bg-white/10'
-                      }`}
-                    >
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-white/10">
                       <Upload size={20} />
                     </div>
                     <div className="flex-1 text-left">
-                      <div className="font-medium">
-                        {newUploadedMusic ? newUploadedMusic.name : 'Upload New Music'}
-                      </div>
-                      <div className="text-xs opacity-60">
-                        {newUploadedMusic ? 'Click to change' : 'MP3, WAV, or other audio formats'}
-                      </div>
+                      <div className="font-medium">Upload Music</div>
+                      <div className="text-xs opacity-60">MP3, WAV, or other audio formats</div>
                     </div>
-                    {newUploadedMusic && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleMusicPreview('', true)
-                          }}
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                            playingMusicPath === 'new-upload'
-                              ? 'bg-green-500 text-white'
-                              : 'bg-white/10 hover:bg-white/20'
-                          }`}
-                        >
-                          {playingMusicPath === 'new-upload' ? (
-                            <Volume2 size={16} className="animate-pulse" />
-                          ) : (
-                            <Music size={16} />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (newUploadedMusic.previewUrl) {
-                              URL.revokeObjectURL(newUploadedMusic.previewUrl)
-                            }
-                            setNewUploadedMusic(null)
-                            if (musicInputRef.current) {
-                              musicInputRef.current.value = ''
-                            }
-                          }}
-                          className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/20 hover:bg-red-500/30 text-red-400"
-                        >
-                          <X size={16} />
-                        </button>
-                      </>
-                    )}
+                    <Plus size={20} className="text-white/40" />
                   </div>
+
+                  {/* Newly uploaded music files */}
+                  {newUploadedMusicList.map((music, index) => (
+                    <div
+                      key={`new-${index}`}
+                      className="w-full flex items-center gap-3 p-3 rounded-xl border transition-all bg-green-500/20 border-green-500 text-white"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleMusicPreview('', index)}
+                        className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                          playingMusicPath === `new-upload-${index}`
+                            ? 'bg-green-500 text-white'
+                            : 'bg-green-500/30 hover:bg-green-500/50'
+                        }`}
+                      >
+                        {playingMusicPath === `new-upload-${index}` ? (
+                          <Volume2 size={20} className="animate-pulse" />
+                        ) : (
+                          <Music size={20} />
+                        )}
+                      </button>
+                      <div className="flex-1 text-left min-w-0">
+                        <div className="font-medium truncate">{music.name}</div>
+                        <div className="text-xs opacity-60">New upload</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeNewUpload(index)}
+                        className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/20 hover:bg-red-500/30 text-red-400"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
 
                   {/* No music option */}
                   <button
                     onClick={() => {
-                      setSelectedMusicPath(null)
-                      setNewUploadedMusic(null)
+                      setSelectedMusicPaths([])
+                      setNewUploadedMusicList([])
                     }}
                     className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                      !selectedMusicPath && !newUploadedMusic
+                      !hasMusic
                         ? 'bg-accent/20 border-accent text-white'
                         : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
                     }`}
                   >
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      !selectedMusicPath && !newUploadedMusic ? 'bg-accent/30' : 'bg-white/10'
+                      !hasMusic ? 'bg-accent/30' : 'bg-white/10'
                     }`}>
                       <VolumeX size={20} />
                     </div>
@@ -727,7 +740,7 @@ export function ImportDialog({
                       <div className="font-medium">No Music</div>
                       <div className="text-xs opacity-60">Silent slideshow</div>
                     </div>
-                    {!selectedMusicPath && !newUploadedMusic && (
+                    {!hasMusic && (
                       <Check size={20} className="text-accent" />
                     )}
                   </button>
@@ -736,71 +749,71 @@ export function ImportDialog({
                   {uploadedMusicFiles.length > 0 && (
                     <>
                       <div className="pt-2 pb-1 px-1 text-xs text-white/40 font-medium">
-                        Previously Uploaded
+                        Previously Uploaded (select multiple)
                       </div>
-                      {uploadedMusicFiles.map((music) => (
-                        <div
-                          key={music.path}
-                          onClick={() => {
-                            setSelectedMusicPath(music.path)
-                            setNewUploadedMusic(null)
-                          }}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
-                            selectedMusicPath === music.path && !newUploadedMusic
-                              ? 'bg-accent/20 border-accent text-white'
-                              : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              toggleMusicPreview(music.path)
-                            }}
-                            className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                              playingMusicPath === music.path
-                                ? 'bg-accent text-white'
-                                : selectedMusicPath === music.path
-                                ? 'bg-accent/30 hover:bg-accent/50'
-                                : 'bg-white/10 hover:bg-white/20'
+                      {uploadedMusicFiles.map((music) => {
+                        const isSelected = selectedMusicPaths.includes(music.path)
+                        return (
+                          <div
+                            key={music.path}
+                            onClick={() => toggleExistingMusicPath(music.path)}
+                            className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-accent/20 border-accent text-white'
+                                : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
                             }`}
                           >
-                            {playingMusicPath === music.path ? (
-                              <Volume2 size={20} className="animate-pulse" />
-                            ) : (
-                              <Music size={20} />
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleMusicPreview(music.path)
+                              }}
+                              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                                playingMusicPath === music.path
+                                  ? 'bg-accent text-white'
+                                  : isSelected
+                                  ? 'bg-accent/30 hover:bg-accent/50'
+                                  : 'bg-white/10 hover:bg-white/20'
+                              }`}
+                            >
+                              {playingMusicPath === music.path ? (
+                                <Volume2 size={20} className="animate-pulse" />
+                              ) : (
+                                <Music size={20} />
+                              )}
+                            </button>
+                            <div className="flex-1 text-left min-w-0">
+                              <div className="font-medium truncate">
+                                {music.displayName || music.filename}
+                              </div>
+                              <div className="text-xs opacity-60 flex items-center gap-2 flex-wrap">
+                                {music.artist && (
+                                  <span className="truncate max-w-[120px]">{music.artist}</span>
+                                )}
+                                {music.album && (
+                                  <span className="truncate max-w-[100px]">&bull; {music.album}</span>
+                                )}
+                                {music.durationFormatted && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock size={10} />
+                                    {music.durationFormatted}
+                                  </span>
+                                )}
+                                {!music.artist && !music.album && !music.durationFormatted && music.uploadedAt && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock size={10} />
+                                    {new Date(music.uploadedAt).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <Check size={20} className="text-accent shrink-0" />
                             )}
-                          </button>
-                          <div className="flex-1 text-left min-w-0">
-                            <div className="font-medium truncate">
-                              {music.displayName || music.filename}
-                            </div>
-                            <div className="text-xs opacity-60 flex items-center gap-2 flex-wrap">
-                              {music.artist && (
-                                <span className="truncate max-w-[120px]">{music.artist}</span>
-                              )}
-                              {music.album && (
-                                <span className="truncate max-w-[100px]">• {music.album}</span>
-                              )}
-                              {music.durationFormatted && (
-                                <span className="flex items-center gap-1">
-                                  <Clock size={10} />
-                                  {music.durationFormatted}
-                                </span>
-                              )}
-                              {!music.artist && !music.album && !music.durationFormatted && music.uploadedAt && (
-                                <span className="flex items-center gap-1">
-                                  <Clock size={10} />
-                                  {new Date(music.uploadedAt).toLocaleDateString()}
-                                </span>
-                              )}
-                            </div>
                           </div>
-                          {selectedMusicPath === music.path && !newUploadedMusic && (
-                            <Check size={20} className="text-accent shrink-0" />
-                          )}
-                        </div>
-                      ))}
+                        )
+                      })}
                     </>
                   )}
                 </div>
@@ -813,7 +826,7 @@ export function ImportDialog({
                     Music Fade Out Duration
                   </label>
                   <p className="text-xs text-white/50 mb-3">
-                    Music will start from the beginning and fade out smoothly at the end
+                    Tracks will play sequentially and fade out smoothly at the end
                   </p>
                   <select
                     value={musicFadeOutMs.toString()}

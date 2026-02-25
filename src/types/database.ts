@@ -179,6 +179,7 @@ export interface Database {
           transition_type: string
           transition_duration_ms: number
           background_music_path: string | null
+          background_music_paths: string[]
           music_fade_out_ms: number
           mute_video_audio: boolean
           created_at: string
@@ -189,6 +190,7 @@ export interface Database {
           transition_type?: string
           transition_duration_ms?: number
           background_music_path?: string | null
+          background_music_paths?: string[]
           music_fade_out_ms?: number
           mute_video_audio?: boolean
         }
@@ -197,6 +199,7 @@ export interface Database {
           transition_type?: string
           transition_duration_ms?: number
           background_music_path?: string | null
+          background_music_paths?: string[]
           music_fade_out_ms?: number
           mute_video_audio?: boolean
         }

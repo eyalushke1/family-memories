@@ -26,6 +26,7 @@ interface ImportRequest {
   slideDurationMs?: number
   transitionType?: string
   backgroundMusicPath?: string | null
+  backgroundMusicPaths?: string[]
   musicFadeOutMs?: number
   muteVideoAudio?: boolean
 }
@@ -34,6 +35,7 @@ interface ImportRequest {
 const DOWNLOAD_CONFIG = {
   retries: 3,
   retryDelay: 1000,
+  timeoutMs: 30000, // 30s per file download
 }
 
 export async function POST(request: NextRequest) {
@@ -45,7 +47,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body: ImportRequest = await request.json()
-  const { mediaItems, createPresentation, presentationTitle, categoryId, slideDurationMs, transitionType, backgroundMusicPath, musicFadeOutMs, muteVideoAudio } = body
+  const { mediaItems, createPresentation, presentationTitle, categoryId, slideDurationMs, transitionType, backgroundMusicPath, backgroundMusicPaths, musicFadeOutMs, muteVideoAudio } = body
 
   if (!mediaItems || mediaItems.length === 0) {
     return errorResponse('No media items selected', 400)
@@ -94,11 +96,15 @@ export async function POST(request: NextRequest) {
       for (let attempt = 0; attempt < DOWNLOAD_CONFIG.retries; attempt++) {
         try {
           // Fetch with OAuth token (Picker API requires authentication)
+          const controller = new AbortController()
+          const downloadTimeout = setTimeout(() => controller.abort(), DOWNLOAD_CONFIG.timeoutMs)
           const response = await fetch(downloadUrl, {
             headers: {
               Authorization: `Bearer ${accessToken}`,
             },
+            signal: controller.signal,
           })
+          clearTimeout(downloadTimeout)
 
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
@@ -184,13 +190,18 @@ export async function POST(request: NextRequest) {
       clipId = clip.id
 
       // Create presentation record
+      const musicPaths = backgroundMusicPaths && backgroundMusicPaths.length > 0
+        ? backgroundMusicPaths
+        : backgroundMusicPath ? [backgroundMusicPath] : []
+
       const { data: presentation, error: presentationError } = await supabase
         .from('presentations')
         .insert({
           clip_id: clipId,
           slide_duration_ms: slideDurationMs || 5000,
           transition_type: transitionType || 'fade',
-          background_music_path: backgroundMusicPath || null,
+          background_music_path: musicPaths[0] || null,
+          background_music_paths: musicPaths,
           music_fade_out_ms: musicFadeOutMs || 3000,
           mute_video_audio: muteVideoAudio ?? true,
         })

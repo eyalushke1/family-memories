@@ -23,6 +23,7 @@ interface PresentationData {
   transitionType: TransitionType
   transitionDurationMs: number
   backgroundMusicUrl?: string | null
+  backgroundMusicUrls?: string[]
   musicFadeOutMs?: number
   muteVideoAudio?: boolean
   slides: Slide[]
@@ -66,9 +67,17 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     transitionType,
     transitionDurationMs,
     backgroundMusicUrl,
+    backgroundMusicUrls = [],
     musicFadeOutMs = 3000,
     muteVideoAudio = true
   } = presentationData
+
+  // Build the list of music URLs to play sequentially
+  const musicUrls = backgroundMusicUrls.length > 0
+    ? backgroundMusicUrls
+    : backgroundMusicUrl ? [backgroundMusicUrl] : []
+  const hasMusic = musicUrls.length > 0
+  const currentTrackIndexRef = useRef(0)
 
   // Normalize slides to use mediaUrl (handle legacy imageUrl)
   const normalizedSlides = useMemo(() =>
@@ -289,15 +298,34 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     return () => clearTimeout(timer)
   }, [currentIndex, transitionDurationMs])
 
-  // Background music
+  // Background music - sequential multi-track playback
   useEffect(() => {
-    if (backgroundMusicUrl && !audioRef.current) {
-      audioRef.current = new Audio(backgroundMusicUrl)
-      audioRef.current.loop = false
-      audioRef.current.volume = 0.5
+    if (!hasMusic) return
+
+    const playTrack = (index: number) => {
+      if (index >= musicUrls.length) return // All tracks done
+      currentTrackIndexRef.current = index
+      const audio = new Audio(musicUrls[index])
+      audio.loop = false
+      audio.volume = 0.5
+      audio.muted = isMuted
+      audio.onended = () => {
+        // Play next track when current one ends
+        const nextIndex = index + 1
+        if (nextIndex < musicUrls.length) {
+          playTrack(nextIndex)
+        }
+        // If last track, just stop (no loop)
+      }
+      audioRef.current = audio
+      if (isPlaying) {
+        audio.play().catch(() => {})
+      }
     }
 
-    if (audioRef.current) {
+    if (!audioRef.current) {
+      playTrack(0)
+    } else {
       audioRef.current.muted = isMuted
       if (isPlaying) {
         audioRef.current.play().catch(() => {})
@@ -308,11 +336,12 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
     return () => {
       if (audioRef.current) {
+        audioRef.current.onended = null
         audioRef.current.pause()
         audioRef.current = null
       }
     }
-  }, [backgroundMusicUrl, isPlaying, isMuted])
+  }, [hasMusic, musicUrls, isPlaying, isMuted])
 
   // Auto-hide controls
   const showControlsTemporarily = useCallback(() => {
@@ -627,7 +656,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
                 <Cast size={20} />
               </button>
             )}
-            {(backgroundMusicUrl || isCurrentVideo) && (
+            {(hasMusic || isCurrentVideo) && (
               <button
                 onClick={() => setIsMuted((m) => !m)}
                 className="p-2 hover:bg-white/10 rounded-full transition-colors"

@@ -56,6 +56,15 @@ export async function PUT(
   if (body.background_music_path !== undefined) {
     updateData.background_music_path = body.background_music_path
   }
+  if (body.background_music_paths !== undefined) {
+    updateData.background_music_paths = body.background_music_paths
+  }
+  if (body.music_fade_out_ms !== undefined) {
+    updateData.music_fade_out_ms = body.music_fade_out_ms
+  }
+  if (body.mute_video_audio !== undefined) {
+    updateData.mute_video_audio = body.mute_video_audio
+  }
 
   const { data, error } = await supabase
     .from('presentations')
