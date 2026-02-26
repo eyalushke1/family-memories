@@ -5,6 +5,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
 import { getContentType, ALLOWED_VIDEO_MIME_TYPES, VIDEO_EXTENSIONS, IMAGE_CONTENT_TYPES } from '@/lib/media/formats'
+import { needsConversion, convertClipVideo } from '@/lib/media/convert-video'
 
 // Route segment config for large file uploads
 export const dynamic = 'force-dynamic'
@@ -154,11 +155,27 @@ export async function POST(request: NextRequest) {
       .from('clips')
       .update({ video_path: storagePath, updated_at: new Date().toISOString() })
       .eq('id', id)
+
+    // Fire-and-forget: convert non-MP4 videos to MP4 in the background
+    if (needsConversion(storagePath)) {
+      console.log(`[Upload] Triggering background conversion for ${storagePath}`)
+      convertClipVideo(storagePath, id, 'clips').catch((err) =>
+        console.error('[Upload] Background conversion failed:', err)
+      )
+    }
   } else if (type === 'intro-video') {
     await supabase
       .from('intro_clips')
       .update({ video_path: storagePath, updated_at: new Date().toISOString() })
       .eq('id', id)
+
+    // Fire-and-forget: convert non-MP4 intro videos
+    if (needsConversion(storagePath)) {
+      console.log(`[Upload] Triggering background conversion for intro ${storagePath}`)
+      convertClipVideo(storagePath, id, 'intro_clips').catch((err) =>
+        console.error('[Upload] Background intro conversion failed:', err)
+      )
+    }
   } else if (type === 'intro-thumbnail') {
     await supabase
       .from('intro_clips')

@@ -5,6 +5,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
 import { getContentType } from '@/lib/media/formats'
+import { needsConversion, convertClipVideo } from '@/lib/media/convert-video'
 
 // Route config - each chunk is small so we don't need long timeouts
 export const dynamic = 'force-dynamic'
@@ -143,6 +144,13 @@ export async function POST(request: NextRequest) {
             .from('clips')
             .update({ video_path: storagePath, updated_at: new Date().toISOString() })
             .eq('id', session.id)
+
+          if (needsConversion(storagePath)) {
+            console.log(`[Chunked] Triggering background conversion for ${storagePath}`)
+            convertClipVideo(storagePath, session.id, 'clips').catch((err) =>
+              console.error('[Chunked] Background conversion failed:', err)
+            )
+          }
         } else if (session.type === 'thumbnail') {
           await supabase
             .from('clips')
@@ -153,6 +161,13 @@ export async function POST(request: NextRequest) {
             .from('intro_clips')
             .update({ video_path: storagePath, updated_at: new Date().toISOString() })
             .eq('id', session.id)
+
+          if (needsConversion(storagePath)) {
+            console.log(`[Chunked] Triggering background conversion for intro ${storagePath}`)
+            convertClipVideo(storagePath, session.id, 'intro_clips').catch((err) =>
+              console.error('[Chunked] Background intro conversion failed:', err)
+            )
+          }
         } else if (session.type === 'intro-thumbnail') {
           await supabase
             .from('intro_clips')

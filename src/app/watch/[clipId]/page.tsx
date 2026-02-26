@@ -309,8 +309,7 @@ export default function WatchPage() {
     setIntroReady(false)
     setIntroFailed(false)
 
-    // Configure video element
-    video.muted = true
+    // Configure video element — start unmuted, attemptPlay will handle fallback
     video.playsInline = true
     video.preload = 'auto'
     video.src = introUrl
@@ -325,7 +324,8 @@ export default function WatchPage() {
 
       const elapsed = Date.now() - loadStart
       console.log('[Player] Intro ready, readyState:', video.readyState, `(${elapsed}ms)`)
-      const success = await attemptPlay(video)
+      // allowUnmuted=true: tries unmuted first for TV/high-MEI, falls back to muted
+      const success = await attemptPlay(video, true)
 
       if (success) {
         setIntroReady(true)
@@ -718,8 +718,8 @@ export default function WatchPage() {
         return
       }
 
-      // On-demand transcoding for any video format that fails to play
-      // Known formats (.avi, .mkv) always trigger this; others (.mov, .webm) trigger as fallback
+      // Last-resort on-demand transcoding for clips not yet converted
+      // (Normally conversion happens on upload or via the 12-hour cron job)
       if (errorCode === 4 && clip?.video_path && canTranscode(clip.video_path)) {
         const isKnown = needsTranscoding(clip.video_path)
         console.log(`[Player] Format ${isKnown ? 'requires' : 'failed, attempting'} transcoding:`, clip.video_path)
@@ -1073,7 +1073,6 @@ export default function WatchPage() {
       {introVideoUrl && (
         <video
           ref={introVideoRef}
-          muted
           autoPlay
           playsInline
           preload="auto"

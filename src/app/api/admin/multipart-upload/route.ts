@@ -12,6 +12,7 @@ import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { MediaPaths } from '@/lib/storage/media-paths'
 import { getContentType } from '@/lib/media/formats'
+import { needsConversion, convertClipVideo } from '@/lib/media/convert-video'
 
 // Route config
 export const dynamic = 'force-dynamic'
@@ -191,11 +192,25 @@ export async function PUT(request: NextRequest) {
         .from('clips')
         .update({ video_path: storagePath, updated_at: new Date().toISOString() })
         .eq('id', id)
+
+      if (needsConversion(storagePath)) {
+        console.log(`[Multipart] Triggering background conversion for ${storagePath}`)
+        convertClipVideo(storagePath, id, 'clips').catch((err) =>
+          console.error('[Multipart] Background conversion failed:', err)
+        )
+      }
     } else if (type === 'intro-video') {
       await supabase
         .from('intro_clips')
         .update({ video_path: storagePath, updated_at: new Date().toISOString() })
         .eq('id', id)
+
+      if (needsConversion(storagePath)) {
+        console.log(`[Multipart] Triggering background conversion for intro ${storagePath}`)
+        convertClipVideo(storagePath, id, 'intro_clips').catch((err) =>
+          console.error('[Multipart] Background intro conversion failed:', err)
+        )
+      }
     }
 
     return successResponse({

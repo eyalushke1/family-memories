@@ -6,7 +6,7 @@ import { useAdminStore } from '@/stores/admin-store'
 import { ClipList } from '@/components/admin/clips/clip-list'
 import { ClipForm } from '@/components/admin/clips/clip-form'
 import { Select } from '@/components/admin/shared/form-field'
-import { Plus, Loader2 } from 'lucide-react'
+import { Plus, Loader2, RefreshCw } from 'lucide-react'
 import type { ClipRow, IntroClipRow, ProfileRow } from '@/types/database'
 
 function ClipsContent() {
@@ -27,6 +27,8 @@ function ClipsContent() {
   const [editingClip, setEditingClip] = useState<ClipRow | null>(null)
   const [introClips, setIntroClips] = useState<IntroClipRow[]>([])
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
+  const [converting, setConverting] = useState(false)
+  const [convertResult, setConvertResult] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchData() {
@@ -81,6 +83,34 @@ function ClipsContent() {
     }
   }, [editClipId, clips, showForm, router])
 
+  const handleConvertAll = async () => {
+    setConverting(true)
+    setConvertResult(null)
+    try {
+      const res = await fetch('/api/admin/convert-clips', { method: 'POST' })
+      const json = await res.json()
+      if (json.success) {
+        const msg = json.converted > 0
+          ? `Converted ${json.converted} clip(s) to MP4${json.failed > 0 ? `, ${json.failed} failed` : ''}`
+          : 'All clips are already in MP4 format'
+        setConvertResult(msg)
+        // Refresh clips list if any were converted
+        if (json.converted > 0) {
+          const clipsRes = await fetch('/api/admin/clips')
+          const clipsData = await clipsRes.json()
+          if (clipsData.success) setClips(clipsData.data)
+        }
+      } else {
+        setConvertResult(`Error: ${json.error}`)
+      }
+    } catch (err) {
+      setConvertResult('Failed to run conversion')
+    } finally {
+      setConverting(false)
+      setTimeout(() => setConvertResult(null), 8000)
+    }
+  }
+
   const handleEdit = (clip: ClipRow) => {
     setEditingClip(clip)
     setShowForm(true)
@@ -104,14 +134,34 @@ function ClipsContent() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Clips</h1>
-        <button
-          onClick={handleNew}
-          className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
-        >
-          <Plus size={20} />
-          Add Clip
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleConvertAll}
+            disabled={converting}
+            className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={18} className={converting ? 'animate-spin' : ''} />
+            {converting ? 'Converting...' : 'Convert Videos'}
+          </button>
+          <button
+            onClick={handleNew}
+            className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
+          >
+            <Plus size={20} />
+            Add Clip
+          </button>
+        </div>
       </div>
+
+      {convertResult && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm ${
+          convertResult.startsWith('Error') || convertResult.startsWith('Failed')
+            ? 'bg-red-500/20 text-red-300'
+            : 'bg-green-500/20 text-green-300'
+        }`}>
+          {convertResult}
+        </div>
+      )}
 
       <div className="mb-6">
         <Select

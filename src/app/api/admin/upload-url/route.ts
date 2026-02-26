@@ -5,6 +5,7 @@ import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
 import { getContentType } from '@/lib/media/formats'
+import { needsConversion, convertClipVideo } from '@/lib/media/convert-video'
 
 type UploadType = 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail' | 'avatar'
 
@@ -128,11 +129,25 @@ export async function PUT(request: NextRequest) {
         .from('clips')
         .update({ video_path: storagePath, updated_at: new Date().toISOString() })
         .eq('id', id)
+
+      if (needsConversion(storagePath)) {
+        console.log(`[Upload-URL] Triggering background conversion for ${storagePath}`)
+        convertClipVideo(storagePath, id, 'clips').catch((err) =>
+          console.error('[Upload-URL] Background conversion failed:', err)
+        )
+      }
     } else if (type === 'intro-video') {
       await supabase
         .from('intro_clips')
         .update({ video_path: storagePath, updated_at: new Date().toISOString() })
         .eq('id', id)
+
+      if (needsConversion(storagePath)) {
+        console.log(`[Upload-URL] Triggering background conversion for intro ${storagePath}`)
+        convertClipVideo(storagePath, id, 'intro_clips').catch((err) =>
+          console.error('[Upload-URL] Background intro conversion failed:', err)
+        )
+      }
     } else if (type === 'intro-thumbnail') {
       await supabase
         .from('intro_clips')
