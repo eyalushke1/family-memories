@@ -65,6 +65,7 @@ export default function WatchPage() {
   const mainVideoRef = useRef<HTMLVideoElement>(null)
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const stallCheckRef = useRef<NodeJS.Timeout | null>(null)
+  const bufferingTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastTimeRef = useRef<number>(0)
   const lastTimeCheckRef = useRef<number>(Date.now())
   const playStateRef = useRef<PlayState>('loading')
@@ -194,27 +195,29 @@ export default function WatchPage() {
       console.log('[Player] Muted play succeeded')
       setIsMuted(true)
 
-      // Strategy 3: Optimistic unmute probe (works when MEI is high or on TV browsers)
-      setTimeout(() => {
-        if (video && !video.paused && !video.ended) {
-          try {
-            video.muted = false
-            // Browser may synchronously pause when unmuting without user gesture
-            if (video.paused) {
-              console.log('[Player] Unmute blocked by browser, staying muted')
+      // Strategy 3: Optimistic unmute probes — try multiple times with increasing delays
+      // On TV browsers, unmuting may only work after a brief delay
+      const unmuteDelays = [300, 1000, 2500]
+      for (const delay of unmuteDelays) {
+        setTimeout(() => {
+          if (video && !video.paused && !video.ended && video.muted) {
+            try {
+              video.muted = false
+              if (video.paused) {
+                console.log(`[Player] Unmute blocked at ${delay}ms, staying muted`)
+                video.muted = true
+                video.play().catch(() => {})
+              } else {
+                console.log(`[Player] Auto-unmuted successfully at ${delay}ms`)
+                setIsMuted(false)
+              }
+            } catch {
               video.muted = true
               video.play().catch(() => {})
-              // isMuted stays true — unmute overlay will appear
-            } else {
-              console.log('[Player] Auto-unmuted successfully (MEI/gesture)')
-              setIsMuted(false)
             }
-          } catch {
-            video.muted = true
-            video.play().catch(() => {})
           }
-        }
-      }, 500)
+        }, delay)
+      }
       return true
     } catch (err) {
       const error = err as DOMException
@@ -631,7 +634,8 @@ export default function WatchPage() {
 
   // === UNMUTE HANDLER (requires user gesture) ===
   const handleUnmute = useCallback(() => {
-    const video = mainVideoRef.current
+    // Unmute whichever video is currently active (intro or main)
+    const video = playStateRef.current === 'intro' ? introVideoRef.current : mainVideoRef.current
     if (!video) return
 
     video.muted = false
@@ -661,15 +665,24 @@ export default function WatchPage() {
   // === MAIN VIDEO EVENT HANDLERS ===
   const handleMainWaiting = useCallback(() => {
     console.log('[Player] Video waiting/buffering')
-    // Only show buffering if video has been playing
+    // Only show buffering if video has been playing, with a delay to avoid flicker
     const video = mainVideoRef.current
     if (video && video.currentTime > 0) {
-      setIsBuffering(true)
+      // Clear any pending timer
+      if (bufferingTimerRef.current) clearTimeout(bufferingTimerRef.current)
+      // Delay showing the buffering spinner — brief stalls resolve on their own
+      bufferingTimerRef.current = setTimeout(() => {
+        const v = mainVideoRef.current
+        if (v && !v.paused && v.readyState < 3) {
+          setIsBuffering(true)
+        }
+      }, 6000)
     }
   }, [])
 
   const handleMainPlaying = useCallback(() => {
     console.log('[Player] Video playing')
+    if (bufferingTimerRef.current) { clearTimeout(bufferingTimerRef.current); bufferingTimerRef.current = null }
     setIsBuffering(false)
     setVideoError(null)
     setNeedsUserPlay(false)
@@ -677,6 +690,7 @@ export default function WatchPage() {
 
   const handleMainCanPlayThrough = useCallback(() => {
     console.log('[Player] Video canplaythrough')
+    if (bufferingTimerRef.current) { clearTimeout(bufferingTimerRef.current); bufferingTimerRef.current = null }
     setIsBuffering(false)
   }, [])
 
@@ -684,6 +698,7 @@ export default function WatchPage() {
     // If video is progressing, definitely not buffering
     const video = mainVideoRef.current
     if (video && video.currentTime > 0 && !video.paused) {
+      if (bufferingTimerRef.current) { clearTimeout(bufferingTimerRef.current); bufferingTimerRef.current = null }
       setIsBuffering(false)
     }
   }, [])
@@ -1000,8 +1015,8 @@ export default function WatchPage() {
         </div>
       )}
 
-      {/* Unmute button — shown when video is playing muted */}
-      {isMuted && playState === 'main' && !needsUserPlay && !videoError && (
+      {/* Unmute button — shown when video is playing muted (intro or main) */}
+      {isMuted && (playState === 'main' || playState === 'intro') && !needsUserPlay && !videoError && (
         <button
           onClick={handleUnmute}
           className="absolute left-4 bottom-24 flex items-center gap-2 rounded-full bg-black/70 px-4 py-2.5 text-white transition-all hover:bg-black/90 cursor-pointer"
