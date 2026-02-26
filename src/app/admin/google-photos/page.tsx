@@ -4,7 +4,6 @@ import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { GooglePhotosConnect } from '@/components/admin/google-photos/google-photos-connect'
 import { GooglePhotosPicker } from '@/components/admin/google-photos/google-photos-picker'
-import type { ProfileRow } from '@/types/database'
 
 function getProfileCookie(): string | null {
   const match = document.cookie.match(/fm-profile-id=([^;]+)/)
@@ -19,8 +18,6 @@ function GooglePhotosContent() {
   const searchParams = useSearchParams()
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
-  const [needsProfile, setNeedsProfile] = useState(false)
-  const [profiles, setProfiles] = useState<ProfileRow[]>([])
 
   // Check URL params for connection status
   const connected = searchParams.get('connected')
@@ -34,16 +31,8 @@ function GooglePhotosContent() {
           const res = await fetch('/api/profiles')
           const json = await res.json()
           if (json.success && json.data?.length > 0) {
-            const allProfiles = json.data as ProfileRow[]
-            // Auto-select first profile if there's only one
-            if (allProfiles.length === 1) {
-              setProfileCookie(allProfiles[0].id)
-            } else {
-              setProfiles(allProfiles)
-              setNeedsProfile(true)
-              setLoading(false)
-              return
-            }
+            // Auto-select first profile for admin use
+            setProfileCookie(json.data[0].id)
           }
         } catch {
           // Continue — the status call will fail with a clear error
@@ -63,14 +52,6 @@ function GooglePhotosContent() {
 
     checkStatus()
   }, [connected])
-
-  const handleProfileSelect = (profile: ProfileRow) => {
-    setProfileCookie(profile.id)
-    setNeedsProfile(false)
-    setLoading(true)
-    // Re-trigger status check
-    window.location.reload()
-  }
 
   const handleDisconnect = async () => {
     try {
@@ -123,28 +104,7 @@ function GooglePhotosContent() {
         </div>
       )}
 
-      {needsProfile ? (
-        <div className="flex flex-col items-center justify-center py-16">
-          <h2 className="text-xl font-semibold mb-2">Select a Profile</h2>
-          <p className="text-text-secondary text-center max-w-md mb-8">
-            Google Photos connections are stored per profile. Please select which profile to use.
-          </p>
-          <div className="flex flex-wrap gap-4 justify-center">
-            {profiles.map((profile) => (
-              <button
-                key={profile.id}
-                onClick={() => handleProfileSelect(profile)}
-                className="flex flex-col items-center gap-2 px-6 py-4 rounded-xl bg-surface-elevated hover:bg-accent/20 border border-border hover:border-accent transition-colors"
-              >
-                <div className="w-12 h-12 rounded-full bg-accent/30 flex items-center justify-center text-lg font-bold">
-                  {profile.name.charAt(0).toUpperCase()}
-                </div>
-                <span className="text-sm font-medium">{profile.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : loading ? (
+      {loading ? (
         <div className="text-text-secondary">Checking connection status...</div>
       ) : isConnected ? (
         <GooglePhotosPicker />

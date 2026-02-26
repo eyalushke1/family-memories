@@ -20,6 +20,7 @@ interface PickerMediaItem {
 
 interface ImportRequest {
   mediaItems: PickerMediaItem[]
+  importOnly?: boolean
   createPresentation?: boolean
   presentationTitle?: string
   categoryId?: string
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body: ImportRequest = await request.json()
-  const { mediaItems, createPresentation, presentationTitle, categoryId, slideDurationMs, transitionType, backgroundMusicPath, backgroundMusicPaths, musicFadeOutMs, muteVideoAudio } = body
+  const { mediaItems, importOnly, createPresentation, presentationTitle, categoryId, slideDurationMs, transitionType, backgroundMusicPath, backgroundMusicPaths, musicFadeOutMs, muteVideoAudio } = body
 
   if (!mediaItems || mediaItems.length === 0) {
     return errorResponse('No media items selected', 400)
@@ -175,6 +176,19 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[Import] Complete: ${importedItems.length} succeeded, ${failedItems.length} failed`)
+
+    // If importOnly mode, return imported paths without creating presentation
+    if (importOnly) {
+      const success = failedItems.length === 0
+      return successResponse({
+        success,
+        totalItems: mediaItems.length,
+        completedItems: importedItems.length,
+        failedItems: failedItems.length,
+        imported: importedItems,
+        failed: failedItems,
+      }, success ? 200 : 207)
+    }
 
     // If creating a presentation, create the clip and presentation records
     let clipId: string | undefined

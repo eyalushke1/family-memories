@@ -90,6 +90,151 @@ export async function extractThumbnailFromVideo(
 }
 
 /**
+ * Extract multiple thumbnail frames from a video at different timestamps.
+ * Returns an array of blobs captured at the given percentages of video duration.
+ */
+export async function extractMultipleFrames(
+  videoFile: File,
+  percentages: number[] = [0.1, 0.4, 0.7],
+  options: Omit<ThumbnailOptions, 'captureTime'> = {}
+): Promise<Blob[]> {
+  const {
+    width = 640,
+    quality = 0.85,
+    format = 'image/webp',
+  } = options
+
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+
+    if (!ctx) {
+      reject(new Error('Failed to get canvas context'))
+      return
+    }
+
+    const videoUrl = URL.createObjectURL(videoFile)
+    const blobs: Blob[] = []
+    let currentIndex = 0
+
+    video.onloadedmetadata = () => {
+      // Seek to first timestamp
+      video.currentTime = video.duration * percentages[0]
+    }
+
+    video.onseeked = () => {
+      const aspectRatio = video.videoWidth / video.videoHeight
+      const height = Math.round(width / aspectRatio)
+      canvas.width = width
+      canvas.height = height
+
+      ctx.drawImage(video, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) blobs.push(blob)
+          currentIndex++
+
+          if (currentIndex < percentages.length) {
+            // Seek to next timestamp
+            video.currentTime = video.duration * percentages[currentIndex]
+          } else {
+            // All frames captured
+            URL.revokeObjectURL(videoUrl)
+            video.remove()
+            resolve(blobs)
+          }
+        },
+        format,
+        quality
+      )
+    }
+
+    video.onerror = () => {
+      URL.revokeObjectURL(videoUrl)
+      video.remove()
+      reject(new Error('Failed to load video for frame extraction'))
+    }
+
+    video.preload = 'metadata'
+    video.muted = true
+    video.playsInline = true
+    video.src = videoUrl
+  })
+}
+
+/**
+ * Extract multiple frames from a video URL (for existing uploaded videos).
+ * Works like extractMultipleFrames but accepts a URL string instead of a File.
+ */
+export async function extractFramesFromUrl(
+  videoUrl: string,
+  percentages: number[] = [0.1, 0.4, 0.7],
+  options: Omit<ThumbnailOptions, 'captureTime'> = {}
+): Promise<Blob[]> {
+  const {
+    width = 640,
+    quality = 0.85,
+    format = 'image/webp',
+  } = options
+
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+
+    if (!ctx) {
+      reject(new Error('Failed to get canvas context'))
+      return
+    }
+
+    const blobs: Blob[] = []
+    let currentIndex = 0
+
+    video.onloadedmetadata = () => {
+      video.currentTime = video.duration * percentages[0]
+    }
+
+    video.onseeked = () => {
+      const aspectRatio = video.videoWidth / video.videoHeight
+      const height = Math.round(width / aspectRatio)
+      canvas.width = width
+      canvas.height = height
+
+      ctx.drawImage(video, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) blobs.push(blob)
+          currentIndex++
+
+          if (currentIndex < percentages.length) {
+            video.currentTime = video.duration * percentages[currentIndex]
+          } else {
+            video.remove()
+            resolve(blobs)
+          }
+        },
+        format,
+        quality
+      )
+    }
+
+    video.onerror = () => {
+      video.remove()
+      reject(new Error('Failed to load video for frame extraction'))
+    }
+
+    video.preload = 'metadata'
+    video.muted = true
+    video.playsInline = true
+    video.crossOrigin = 'anonymous'
+    video.src = videoUrl
+  })
+}
+
+/**
  * Convert a Blob to a File object
  */
 export function blobToFile(blob: Blob, filename: string): File {

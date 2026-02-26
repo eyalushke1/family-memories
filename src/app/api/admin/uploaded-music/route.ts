@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getStorage } from '@/lib/storage'
 import { checkAdmin } from '@/lib/api/admin-check'
-import { successResponse } from '@/lib/api/response'
+import { successResponse, errorResponse } from '@/lib/api/response'
 
 interface MusicMetadata {
   originalFilename?: string
@@ -93,5 +93,46 @@ export async function GET(request: NextRequest) {
     console.error('Failed to list uploaded music:', err)
     // Return empty array on error since this is non-critical
     return successResponse([])
+  }
+}
+
+/**
+ * DELETE /api/admin/uploaded-music
+ * Delete a music file and its metadata sidecar from storage
+ * Body: { path: string }
+ */
+export async function DELETE(request: NextRequest) {
+  const adminErr = checkAdmin(request)
+  if (adminErr) return adminErr
+
+  try {
+    const { path } = await request.json()
+    if (!path || typeof path !== 'string') {
+      return errorResponse('path is required', 400)
+    }
+
+    // Ensure the path is within the temp music folder
+    if (!path.startsWith('presentations/temp/music/')) {
+      return errorResponse('Invalid music path', 400)
+    }
+
+    const storage = getStorage()
+
+    // Delete the audio file
+    await storage.delete(path)
+
+    // Try to delete the metadata sidecar (.json) file too
+    const extension = path.slice(path.lastIndexOf('.'))
+    const metadataPath = path.replace(extension, '.json')
+    try {
+      await storage.delete(metadataPath)
+    } catch {
+      // Metadata file may not exist — that's fine
+    }
+
+    return successResponse({ deleted: true })
+  } catch (err) {
+    console.error('Failed to delete music file:', err)
+    return errorResponse('Failed to delete music file')
   }
 }

@@ -7,6 +7,7 @@ export interface Database {
           name: string
           avatar_path: string | null
           is_hidden: boolean
+          theme: string
           created_at: string
           updated_at: string
         }
@@ -14,11 +15,13 @@ export interface Database {
           name: string
           avatar_path?: string | null
           is_hidden?: boolean
+          theme?: string
         }
         Update: {
           name?: string
           avatar_path?: string | null
           is_hidden?: boolean
+          theme?: string
           updated_at?: string
         }
       }

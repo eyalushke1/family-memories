@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings, Zap } from 'lucide-react'
 
 const navItems = [
@@ -51,7 +52,11 @@ export function AdminSidebar() {
         })}
       </nav>
 
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border space-y-1">
+        <div className="flex items-center gap-3 px-4 py-2">
+          <ThemeToggle />
+          <span className="text-sm text-text-secondary">Theme</span>
+        </div>
         <Link
           href="/browse"
           className="flex items-center gap-3 px-4 py-3 text-text-secondary hover:text-text-primary transition-colors"

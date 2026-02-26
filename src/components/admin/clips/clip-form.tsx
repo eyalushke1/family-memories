@@ -6,8 +6,9 @@ import { useAdminStore } from '@/stores/admin-store'
 import { FormField, Input, Textarea, Select } from '@/components/admin/shared/form-field'
 import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { FileUploadZone } from '@/components/admin/shared/file-upload-zone'
-import { extractThumbnailFromVideo, blobToFile } from '@/lib/video/extract-thumbnail'
-import { X, Check, Wand2, AlertTriangle } from 'lucide-react'
+import { extractThumbnailFromVideo, extractMultipleFrames, extractFramesFromUrl, blobToFile } from '@/lib/video/extract-thumbnail'
+import { PresentationEditDialog } from '@/components/admin/presentations/presentation-edit-dialog'
+import { X, Check, Wand2, AlertTriangle, ImageIcon, Presentation } from 'lucide-react'
 import { getFormatWarning, needsTranscoding } from '@/lib/media/formats'
 import type { ClipRow, CategoryRow, IntroClipRow, ProfileRow } from '@/types/database'
 
@@ -57,12 +58,39 @@ export function ClipForm({
   const [thumbnailUploadProgress, setThumbnailUploadProgress] = useState<number | null>(null)
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [formatWarning, setFormatWarning] = useState<string | null>(null)
+  const [frameOptions, setFrameOptions] = useState<{ blob: Blob; url: string }[]>([])
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null)
+  const [extractingFrames, setExtractingFrames] = useState(false)
+  const [showPresentationEditor, setShowPresentationEditor] = useState(false)
+  const [presentationId, setPresentationId] = useState<string | null>(clip?.presentation?.id ?? null)
+  const [slideImageOptions, setSlideImageOptions] = useState<{ url: string; path: string }[]>([])
 
   // Store pending files for new clips
   const pendingVideoFile = useRef<File | null>(null)
   const pendingThumbnailFile = useRef<File | null>(null)
 
   const isEditing = !!clip
+  const isPresentationClip = clip?.video_path === 'presentation'
+
+  // Fetch presentation ID for presentation clips if not already known
+  useEffect(() => {
+    if (!isPresentationClip || !clip?.id || presentationId) return
+
+    async function fetchPresentationId() {
+      try {
+        const res = await fetch('/api/admin/presentations')
+        const data = await res.json()
+        if (data.success) {
+          const pres = data.data.find((p: { clip_id: string }) => p.clip_id === clip!.id)
+          if (pres) setPresentationId(pres.id)
+        }
+      } catch (err) {
+        console.error('Failed to fetch presentation:', err)
+      }
+    }
+
+    fetchPresentationId()
+  }, [isPresentationClip, clip?.id, presentationId])
 
   // Load existing profile associations when editing
   useEffect(() => {
@@ -733,6 +761,8 @@ export function ClipForm({
       if (!pendingThumbnailFile.current && !thumbnailPreview) {
         await generateThumbnailFromVideo(file)
       }
+      // Extract frame options for selection
+      handleExtractFrameOptions(file)
       return
     }
 
@@ -807,6 +837,120 @@ export function ClipForm({
     if (pendingVideoFile.current) {
       await generateThumbnailFromVideo(pendingVideoFile.current)
     }
+  }
+
+  const handleExtractFrameOptions = async (videoFile: File) => {
+    setExtractingFrames(true)
+    setSelectedFrameIndex(null)
+    try {
+      const blobs = await extractMultipleFrames(videoFile, [0.1, 0.4, 0.7])
+      const options = blobs.map((blob) => ({
+        blob,
+        url: URL.createObjectURL(blob),
+      }))
+      setFrameOptions(options)
+    } catch (err) {
+      console.error('Failed to extract frame options:', err)
+    } finally {
+      setExtractingFrames(false)
+    }
+  }
+
+  const handleExtractFramesFromExistingVideo = async () => {
+    if (!clip?.video_path || clip.video_path === 'pending' || clip.video_path === 'presentation') return
+    setExtractingFrames(true)
+    setSelectedFrameIndex(null)
+    try {
+      const videoUrl = `/api/media/files/${clip.video_path}`
+      const blobs = await extractFramesFromUrl(videoUrl, [0.1, 0.4, 0.7])
+      const options = blobs.map((blob) => ({
+        blob,
+        url: URL.createObjectURL(blob),
+      }))
+      setFrameOptions(options)
+    } catch (err) {
+      console.error('Failed to extract frame options from existing video:', err)
+      setError('Failed to extract video frames. The video format may not be supported in browser.')
+    } finally {
+      setExtractingFrames(false)
+    }
+  }
+
+  const handleFetchSlideOptions = async () => {
+    if (!presentationId) return
+    try {
+      const res = await fetch(`/api/admin/presentations/${presentationId}/slides`)
+      const data = await res.json()
+      if (data.success && Array.isArray(data.data)) {
+        const slides = data.data as { image_path: string }[]
+        // Pick up to 3 random slides
+        const shuffled = [...slides].sort(() => Math.random() - 0.5)
+        const picked = shuffled.slice(0, 3)
+        setSlideImageOptions(
+          picked.map((s) => ({
+            url: `/api/media/files/${s.image_path}`,
+            path: s.image_path,
+          }))
+        )
+      }
+    } catch (err) {
+      console.error('Failed to fetch slides for thumbnail:', err)
+    }
+  }
+
+  const handleSelectSlideAsThumbnail = async (option: { url: string; path: string }) => {
+    if (!clip?.id) return
+    // Use the slide image path directly as the thumbnail
+    try {
+      const res = await fetch(`/api/admin/clips/${clip.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thumbnail_path: option.path }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setThumbnailPath(option.path)
+        // Add cache-buster to force browser to show the updated image
+        setThumbnailPreview(`${option.url}${option.url.includes('?') ? '&' : '?'}t=${Date.now()}`)
+        updateClip(clip.id, { thumbnail_path: option.path })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update thumbnail')
+    }
+  }
+
+  const handleSelectFrame = async (option: { blob: Blob; url: string }, index?: number) => {
+    const file = blobToFile(option.blob, 'thumbnail.webp')
+
+    if (clip?.id) {
+      // For existing clips, upload the selected frame immediately
+      try {
+        setThumbnailUploadProgress(0)
+        const thumbPath = await uploadFile(
+          file,
+          'thumbnail',
+          clip.id,
+          (progress) => setThumbnailUploadProgress(progress)
+        )
+        setThumbnailPath(thumbPath)
+        // Add cache-buster to force browser to show the new image
+        // (path may be the same as the old thumbnail, so browser would serve cached version)
+        setThumbnailPreview(`/api/media/files/${thumbPath}?t=${Date.now()}`)
+        setSelectedFrameIndex(index ?? null)
+        updateClip(clip.id, { thumbnail_path: thumbPath })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to upload thumbnail')
+      } finally {
+        setThumbnailUploadProgress(null)
+      }
+    } else {
+      // For new clips, store pending
+      pendingThumbnailFile.current = file
+      setThumbnailPreview(option.url)
+      setThumbnailPath('pending')
+      setSelectedFrameIndex(index ?? null)
+    }
+    setThumbnailAutoGenerated(false)
   }
 
   const activeCategories = categories.filter((c) => c.is_active)
@@ -903,9 +1047,135 @@ export function ClipForm({
                       Thumbnail will be auto-generated from video if not provided
                     </p>
                   )}
+                  {/* Button to extract frames from existing video */}
+                  {isEditing && clip?.video_path && clip.video_path !== 'pending' && !isPresentationClip && frameOptions.length === 0 && !extractingFrames && (
+                    <button
+                      type="button"
+                      onClick={handleExtractFramesFromExistingVideo}
+                      className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg border border-dashed border-border text-text-muted hover:text-text-primary hover:border-accent hover:bg-accent/5 transition-all text-xs"
+                    >
+                      <ImageIcon size={14} />
+                      Choose thumbnail from video frames
+                    </button>
+                  )}
+                  {/* Button to choose thumbnail from presentation slides */}
+                  {isEditing && isPresentationClip && presentationId && slideImageOptions.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={handleFetchSlideOptions}
+                      className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg border border-dashed border-border text-text-muted hover:text-text-primary hover:border-accent hover:bg-accent/5 transition-all text-xs"
+                    >
+                      <ImageIcon size={14} />
+                      Choose thumbnail from slides
+                    </button>
+                  )}
+                  {/* Slide thumbnail selection options */}
+                  {slideImageOptions.length > 0 && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1">
+                          <ImageIcon size={12} className="text-text-muted" />
+                          <span className="text-xs text-text-muted">Choose from slides:</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleFetchSlideOptions}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          Shuffle
+                        </button>
+                      </div>
+                      <div className="flex gap-2">
+                        {slideImageOptions.map((option, index) => (
+                          <button
+                            key={option.path}
+                            type="button"
+                            onClick={() => handleSelectSlideAsThumbnail(option)}
+                            className={`relative rounded overflow-hidden border-2 transition-colors ${
+                              thumbnailPreview === option.url
+                                ? 'border-accent'
+                                : 'border-border hover:border-text-muted'
+                            }`}
+                          >
+                            <img
+                              src={option.url}
+                              alt={`Slide ${index + 1}`}
+                              className="w-20 h-12 object-cover"
+                            />
+                            {thumbnailPreview === option.url && (
+                              <div className="absolute inset-0 bg-accent/20 flex items-center justify-center">
+                                <Check size={14} className="text-white" />
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Frame selection options */}
+                  {(frameOptions.length > 0 || extractingFrames) && (
+                    <div className="mt-2">
+                      <div className="flex items-center gap-1 mb-1.5">
+                        <ImageIcon size={12} className="text-text-muted" />
+                        <span className="text-xs text-text-muted">
+                          {extractingFrames ? 'Extracting frames...' : 'Choose from video frames:'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        {frameOptions.map((option, index) => {
+                          const isFrameSelected = selectedFrameIndex === index
+                          return (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => handleSelectFrame(option, index)}
+                              className={`relative rounded overflow-hidden border-2 transition-colors ${
+                                isFrameSelected
+                                  ? 'border-accent'
+                                  : 'border-border hover:border-text-muted'
+                              }`}
+                            >
+                              <img
+                                src={option.url}
+                                alt={`Frame ${index + 1}`}
+                                className="w-20 h-12 object-cover"
+                              />
+                              {isFrameSelected && (
+                                <div className="absolute inset-0 bg-accent/20 flex items-center justify-center">
+                                  <Check size={14} className="text-white" />
+                                </div>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </FormField>
             </div>
+
+            {/* Presentation Management - shown when editing a presentation clip */}
+            {isEditing && isPresentationClip && presentationId && (
+              <div className="bg-accent/5 border border-accent/20 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Presentation size={18} className="text-accent" />
+                    <span className="text-sm font-medium">Slideshow Presentation</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPresentationEditor(true)}
+                    className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm rounded-lg transition-colors"
+                  >
+                    Edit Presentation
+                  </button>
+                </div>
+                <p className="text-xs text-text-muted mt-2">
+                  Add or remove photos, change music, reorder slides, and manage thumbnails
+                </p>
+              </div>
+            )}
 
             <FormField label="Title">
               <Input
@@ -1098,6 +1368,28 @@ export function ClipForm({
           </form>
         </div>
       </motion.div>
+      {showPresentationEditor && presentationId && (
+        <PresentationEditDialog
+          presentationId={presentationId}
+          onClose={() => setShowPresentationEditor(false)}
+          onSave={() => {
+            setShowPresentationEditor(false)
+            // Refresh thumbnail preview in case it was changed
+            if (clip?.id) {
+              fetch(`/api/admin/clips/${clip.id}`)
+                .then((res) => res.json())
+                .then((data) => {
+                  if (data.success && data.data.thumbnail_path) {
+                    setThumbnailPath(data.data.thumbnail_path)
+                    setThumbnailPreview(`/api/media/files/${data.data.thumbnail_path}`)
+                    updateClip(clip.id, { thumbnail_path: data.data.thumbnail_path })
+                  }
+                })
+                .catch(() => {})
+            }
+          }}
+        />
+      )}
     </>
   )
 }

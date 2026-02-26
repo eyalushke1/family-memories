@@ -21,6 +21,7 @@ import {
   Type,
   MessageSquare,
   Plus,
+  ImagePlus,
 } from 'lucide-react'
 import type { PresentationRow, PresentationSlideRow } from '@/types/database'
 
@@ -101,6 +102,15 @@ export function PresentationEditDialog({
   const [editingCaption, setEditingCaption] = useState('')
   const [savingCaption, setSavingCaption] = useState(false)
 
+  // Add photos state
+  const [addingPhotos, setAddingPhotos] = useState(false)
+  const [addPhotosStatus, setAddPhotosStatus] = useState('')
+
+  // Thumbnail picker state
+  const [thumbnailOptions, setThumbnailOptions] = useState<string[]>([])
+  const [selectedThumbnail, setSelectedThumbnail] = useState<string | null>(null)
+  const [generatingAnimated, setGeneratingAnimated] = useState(false)
+
   const musicInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch presentation data
@@ -112,7 +122,7 @@ export function PresentationEditDialog({
         const data = await res.json()
 
         if (data.success) {
-          const pres = data.data as PresentationWithSlides
+          const pres = data.data as PresentationWithSlides & { clip?: { id: string; thumbnail_path: string | null } }
           setPresentation(pres)
           setSlides(pres.slides.sort((a, b) => a.sort_order - b.sort_order))
           setSlideDurationMs(pres.slide_duration_ms)
@@ -125,6 +135,21 @@ export function PresentationEditDialog({
             ? pres.background_music_paths
             : pres.background_music_path ? [pres.background_music_path] : []
           setSelectedMusicPaths(paths)
+
+          // Generate thumbnail options from random slides
+          const sortedSlides = pres.slides.sort((a, b) => a.sort_order - b.sort_order)
+          const imageSlides = sortedSlides.filter((s) =>
+            !s.image_path.toLowerCase().match(/\.(mp4|mov|avi|webm|mkv)$/)
+          )
+          if (imageSlides.length > 0) {
+            const shuffled = [...imageSlides].sort(() => Math.random() - 0.5)
+            const picks = shuffled.slice(0, Math.min(3, shuffled.length))
+            setThumbnailOptions(picks.map((s) => s.image_path))
+          }
+          // Set current thumbnail
+          if (pres.clip?.thumbnail_path) {
+            setSelectedThumbnail(pres.clip.thumbnail_path)
+          }
         } else {
           setError(data.error || 'Failed to load presentation')
         }
@@ -206,6 +231,27 @@ export function PresentationEditDialog({
       return prev.filter((_, i) => i !== index)
     })
     setHasChanges(true)
+  }
+
+  const deleteUploadedMusic = async (path: string) => {
+    try {
+      const res = await fetch('/api/admin/uploaded-music', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (res.ok) {
+        setUploadedMusicFiles((prev) => prev.filter((m) => m.path !== path))
+        setSelectedMusicPaths((prev) => prev.filter((p) => p !== path))
+        if (playingMusicPath === path) {
+          previewAudio?.pause()
+          setPlayingMusicPath(null)
+        }
+        setHasChanges(true)
+      }
+    } catch {
+      // Silently fail
+    }
   }
 
   const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -310,6 +356,259 @@ export function PresentationEditDialog({
       }
     } catch (err) {
       setError('Failed to delete slide')
+    }
+  }
+
+  const handleSetThumbnail = async (imagePath: string) => {
+    const clipId = (presentation as any)?.clip?.id || presentation?.clip_id
+    if (!clipId) return
+
+    setSelectedThumbnail(imagePath)
+    setHasChanges(true)
+
+    try {
+      await fetch(`/api/admin/clips/${clipId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thumbnail_path: imagePath }),
+      })
+    } catch (err) {
+      console.error('Failed to update thumbnail:', err)
+      setError('Failed to update thumbnail')
+    }
+  }
+
+  const handleGenerateAnimatedThumbnail = async () => {
+    const clipId = (presentation as any)?.clip?.id || presentation?.clip_id
+    if (!clipId || slides.length < 2) return
+
+    setGeneratingAnimated(true)
+    setError('')
+
+    try {
+      // Pick up to 6 evenly-spaced image slides
+      const imageSlides = slides.filter(
+        (s) => !s.image_path.toLowerCase().match(/\.(mp4|mov|avi|webm|mkv)$/)
+      )
+      const step = Math.max(1, Math.floor(imageSlides.length / 6))
+      const selectedSlides = imageSlides.filter((_, i) => i % step === 0).slice(0, 6)
+
+      if (selectedSlides.length < 2) {
+        setError('Need at least 2 image slides to generate preview')
+        return
+      }
+
+      // Load images
+      const loadImage = (src: string): Promise<HTMLImageElement> =>
+        new Promise((resolve, reject) => {
+          const img = new Image()
+          img.crossOrigin = 'anonymous'
+          img.onload = () => resolve(img)
+          img.onerror = reject
+          img.src = src
+        })
+
+      const images = await Promise.all(
+        selectedSlides.map((s) => loadImage(`/api/media/files/${s.image_path}`))
+      )
+
+      // Create canvas and record animation
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 360
+      const ctx = canvas.getContext('2d')!
+
+      const stream = canvas.captureStream(10)
+      const recorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 1000000,
+      })
+
+      const chunks: Blob[] = []
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data)
+      }
+
+      const recordingDone = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => {
+          resolve(new Blob(chunks, { type: 'video/webm' }))
+        }
+      })
+
+      recorder.start()
+
+      // Draw each image for ~500ms
+      for (const img of images) {
+        const aspectRatio = img.naturalWidth / img.naturalHeight
+        const canvasAspect = canvas.width / canvas.height
+
+        let drawWidth = canvas.width
+        let drawHeight = canvas.height
+        let offsetX = 0
+        let offsetY = 0
+
+        if (aspectRatio > canvasAspect) {
+          drawHeight = canvas.width / aspectRatio
+          offsetY = (canvas.height - drawHeight) / 2
+        } else {
+          drawWidth = canvas.height * aspectRatio
+          offsetX = (canvas.width - drawWidth) / 2
+        }
+
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight)
+
+        // Wait 500ms per frame
+        await new Promise((r) => setTimeout(r, 500))
+      }
+
+      recorder.stop()
+      const blob = await recordingDone
+
+      // Upload the animated thumbnail
+      const formData = new FormData()
+      formData.append('file', new File([blob], 'animated-thumbnail.webm', { type: 'video/webm' }))
+      formData.append('type', 'animated-thumbnail')
+      formData.append('id', clipId)
+
+      const uploadRes = await fetch('/api/admin/upload', {
+        method: 'POST',
+        body: formData,
+      })
+      const uploadData = await uploadRes.json()
+
+      if (uploadData.success) {
+        await fetch(`/api/admin/clips/${clipId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ animated_thumbnail_path: uploadData.data.path }),
+        })
+      }
+    } catch (err) {
+      console.error('Failed to generate animated thumbnail:', err)
+      setError('Failed to generate animated preview')
+    } finally {
+      setGeneratingAnimated(false)
+    }
+  }
+
+  const handleAddPhotos = async () => {
+    setAddingPhotos(true)
+    setAddPhotosStatus('Opening Google Photos...')
+    setError('')
+
+    try {
+      // 1. Create picker session
+      const sessionRes = await fetch('/api/admin/google-photos/picker/session', { method: 'POST' })
+      const sessionData = await sessionRes.json()
+      if (!sessionData.success) throw new Error(sessionData.error || 'Failed to create picker session')
+
+      const { sessionId, pickerUri } = sessionData.data
+      const pollInterval = sessionData.data.pollingConfig?.pollInterval
+        ? parseInt(sessionData.data.pollingConfig.pollInterval.replace('s', '')) * 1000
+        : 5000
+
+      // 2. Open picker popup
+      const popup = window.open(pickerUri, 'google-photos-picker', 'width=800,height=600,popup=true')
+      if (!popup) throw new Error('Failed to open picker window. Please allow popups.')
+
+      setAddPhotosStatus('Waiting for photo selection...')
+
+      // 3. Poll until selection is done
+      const pollStart = Date.now()
+      const pollTimeout = 30 * 60 * 1000
+      while (true) {
+        if (Date.now() - pollStart > pollTimeout) throw new Error('Picker session timed out')
+        await new Promise((r) => setTimeout(r, pollInterval))
+
+        const checkRes = await fetch(`/api/admin/google-photos/picker/session/${sessionId}`)
+        const checkData = await checkRes.json()
+        if (checkData.data?.mediaItemsSet) break
+      }
+
+      // 4. Fetch selected media items
+      setAddPhotosStatus('Fetching selected photos...')
+      const allItems: any[] = []
+      let pageToken: string | undefined
+      do {
+        const url = pageToken
+          ? `/api/admin/google-photos/picker/media?sessionId=${sessionId}&pageToken=${encodeURIComponent(pageToken)}`
+          : `/api/admin/google-photos/picker/media?sessionId=${sessionId}`
+        const mediaRes = await fetch(url)
+        const mediaData = await mediaRes.json()
+        if (!mediaData.success) throw new Error(mediaData.error || 'Failed to fetch media')
+        allItems.push(...mediaData.data.items)
+        pageToken = mediaData.data.nextPageToken
+      } while (pageToken)
+
+      // Cleanup session
+      fetch(`/api/admin/google-photos/picker/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
+
+      if (allItems.length === 0) {
+        setAddPhotosStatus('')
+        setAddingPhotos(false)
+        return
+      }
+
+      // 5. Import photos (download only, no presentation creation)
+      setAddPhotosStatus(`Importing ${allItems.length} photos...`)
+      const importRes = await fetch('/api/admin/google-photos/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaItems: allItems.map((item: any) => ({
+            id: item.id,
+            filename: item.filename,
+            mimeType: item.mimeType,
+            baseUrl: item.baseUrl,
+            thumbnailUrl: item.thumbnailUrl,
+            downloadUrl: item.downloadUrl,
+            createTime: item.createTime,
+            width: String(item.width || 0),
+            height: String(item.height || 0),
+            isVideo: item.isVideo,
+          })),
+          importOnly: true,
+        }),
+      })
+      const importData = await importRes.json()
+      if (!importData.success && importData.data?.completedItems === 0) {
+        throw new Error('Failed to import photos')
+      }
+
+      // 6. Add imported items as slides
+      const imported = importData.data?.imported || []
+      setAddPhotosStatus(`Adding ${imported.length} slides...`)
+
+      const currentMaxOrder = slides.length > 0 ? Math.max(...slides.map((s) => s.sort_order)) : -1
+
+      for (let i = 0; i < imported.length; i++) {
+        const item = imported[i]
+        const isVideo = item.filename.toLowerCase().match(/\.(mp4|mov|avi|webm|mkv)$/)
+        const res = await fetch(`/api/admin/presentations/${presentationId}/slides`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_path: item.storagePath,
+            media_type: isVideo ? 'video' : 'image',
+            sort_order: currentMaxOrder + 1 + i,
+            google_photos_id: item.googleMediaId,
+          }),
+        })
+        const slideData = await res.json()
+        if (slideData.success) {
+          setSlides((prev) => [...prev, slideData.data])
+        }
+      }
+
+      setHasChanges(true)
+      setAddPhotosStatus('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add photos')
+    } finally {
+      setAddingPhotos(false)
+      setAddPhotosStatus('')
     }
   }
 
@@ -468,6 +767,103 @@ export function PresentationEditDialog({
                 </div>
               ))}
             </div>
+
+            {/* Add Photos Button */}
+            <button
+              onClick={handleAddPhotos}
+              disabled={addingPhotos || saving}
+              className="mt-3 w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-white/20 text-white/60 hover:bg-white/5 hover:text-white hover:border-white/40 transition-all disabled:opacity-50"
+            >
+              {addingPhotos ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span className="text-sm">{addPhotosStatus || 'Adding photos...'}</span>
+                </>
+              ) : (
+                <>
+                  <ImagePlus size={16} />
+                  <span className="text-sm">Add Photos from Google</span>
+                </>
+              )}
+            </button>
+
+            {/* Thumbnail Picker */}
+            {slides.length >= 1 && (
+              <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-medium text-white/80">Clip Thumbnail</span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        const imageSlides = slides.filter((s) =>
+                          !s.image_path.toLowerCase().match(/\.(mp4|mov|avi|webm|mkv)$/)
+                        )
+                        if (imageSlides.length > 0) {
+                          const shuffled = [...imageSlides].sort(() => Math.random() - 0.5)
+                          const picks = shuffled.slice(0, Math.min(3, shuffled.length))
+                          setThumbnailOptions(picks.map((s) => s.image_path))
+                        }
+                      }}
+                      className="text-xs text-white/50 hover:text-white/80 flex items-center gap-1"
+                      title="Show different thumbnail options"
+                    >
+                      <Shuffle size={12} />
+                      Shuffle
+                    </button>
+                    <button
+                      onClick={handleGenerateAnimatedThumbnail}
+                      disabled={generatingAnimated || slides.length < 2}
+                      className="text-xs px-2 py-1 bg-accent/20 text-accent hover:bg-accent/30 rounded-md disabled:opacity-50 flex items-center gap-1 transition-colors"
+                    >
+                      {generatingAnimated ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={12} />
+                          Animated Preview
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                {thumbnailOptions.length > 0 ? (
+                  <div className="flex gap-2">
+                    {thumbnailOptions.map((path) => (
+                      <button
+                        key={path}
+                        onClick={() => handleSetThumbnail(path)}
+                        className={`relative shrink-0 rounded-lg overflow-hidden border-2 transition-colors ${
+                          selectedThumbnail === path
+                            ? 'border-accent'
+                            : 'border-transparent hover:border-white/30'
+                        }`}
+                      >
+                        <img
+                          src={`/api/media/files/${path}`}
+                          alt=""
+                          className="w-24 h-16 object-cover"
+                        />
+                        {selectedThumbnail === path && (
+                          <div className="absolute inset-0 bg-accent/20 flex items-center justify-center">
+                            <Check size={16} className="text-white" />
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-white/40">
+                    Click &quot;Shuffle&quot; to see thumbnail options from your slides
+                  </p>
+                )}
+                <p className="text-xs text-white/40 mt-2">
+                  Select an image to use as the clip thumbnail in the browse view
+                </p>
+              </div>
+            )}
 
             {/* Caption Editor */}
             {selectedSlideId && (
@@ -696,38 +1092,11 @@ export function PresentationEditDialog({
                     </div>
                   ))}
 
-                  {/* No music option */}
-                  <button
-                    onClick={() => {
-                      setSelectedMusicPaths([])
-                      setNewUploadedMusicList([])
-                      setHasChanges(true)
-                    }}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                      !hasMusic
-                        ? 'bg-accent/20 border-accent text-white'
-                        : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
-                    }`}
-                  >
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      !hasMusic ? 'bg-accent/30' : 'bg-white/10'
-                    }`}>
-                      <VolumeX size={20} />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <div className="font-medium">No Music</div>
-                      <div className="text-xs opacity-60">Silent slideshow</div>
-                    </div>
-                    {!hasMusic && (
-                      <Check size={20} className="text-accent" />
-                    )}
-                  </button>
-
                   {/* Previously uploaded music files */}
                   {uploadedMusicFiles.length > 0 && (
                     <>
                       <div className="pt-2 pb-1 px-1 text-xs text-white/40 font-medium">
-                        Previously Uploaded (select multiple)
+                        Music Library (select multiple)
                       </div>
                       {uploadedMusicFiles.map((music) => {
                         const isSelected = selectedMusicPaths.includes(music.path)
@@ -789,11 +1158,49 @@ export function PresentationEditDialog({
                             {isSelected && (
                               <Check size={20} className="text-accent shrink-0" />
                             )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                deleteUploadedMusic(music.path)
+                              }}
+                              className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/20 hover:bg-red-500/30 text-red-400 shrink-0"
+                              title="Delete music file"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         )
                       })}
                     </>
                   )}
+
+                  {/* No music option */}
+                  <button
+                    onClick={() => {
+                      setSelectedMusicPaths([])
+                      setNewUploadedMusicList([])
+                      setHasChanges(true)
+                    }}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                      !hasMusic
+                        ? 'bg-accent/20 border-accent text-white'
+                        : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      !hasMusic ? 'bg-accent/30' : 'bg-white/10'
+                    }`}>
+                      <VolumeX size={20} />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="font-medium">No Music</div>
+                      <div className="text-xs opacity-60">Silent slideshow</div>
+                    </div>
+                    {!hasMusic && (
+                      <Check size={20} className="text-accent" />
+                    )}
+                  </button>
                 </div>
               )}
 

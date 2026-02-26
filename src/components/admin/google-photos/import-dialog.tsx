@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { X, Presentation, Loader2, Music, Volume2, VolumeX, Check, Sparkles, Plus, Upload, Shuffle, VideoOff, Video, ArrowUpDown, Calendar, GripVertical, Clock } from 'lucide-react'
+import { X, Presentation, Loader2, Music, Volume2, VolumeX, Check, Sparkles, Plus, Upload, Shuffle, VideoOff, Video, ArrowUpDown, Calendar, GripVertical, Clock, Trash2 } from 'lucide-react'
 import type { CategoryRow } from '@/types/database'
 
 type SortOrder = 'date-asc' | 'date-desc' | 'custom'
@@ -252,6 +252,29 @@ export function ImportDialog({
     setSelectedMusicPaths((prev) =>
       prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
     )
+  }
+
+  const deleteUploadedMusic = async (path: string) => {
+    try {
+      const res = await fetch('/api/admin/uploaded-music', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (res.ok) {
+        // Remove from the list
+        setUploadedMusicFiles((prev) => prev.filter((m) => m.path !== path))
+        // Deselect if it was selected
+        setSelectedMusicPaths((prev) => prev.filter((p) => p !== path))
+        // Stop preview if playing
+        if (playingMusicPath === path) {
+          previewAudio?.pause()
+          setPlayingMusicPath(null)
+        }
+      }
+    } catch {
+      // Silently fail
+    }
   }
 
   const handleCreateCategory = async () => {
@@ -719,37 +742,11 @@ export function ImportDialog({
                     </div>
                   ))}
 
-                  {/* No music option */}
-                  <button
-                    onClick={() => {
-                      setSelectedMusicPaths([])
-                      setNewUploadedMusicList([])
-                    }}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                      !hasMusic
-                        ? 'bg-accent/20 border-accent text-white'
-                        : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
-                    }`}
-                  >
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      !hasMusic ? 'bg-accent/30' : 'bg-white/10'
-                    }`}>
-                      <VolumeX size={20} />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <div className="font-medium">No Music</div>
-                      <div className="text-xs opacity-60">Silent slideshow</div>
-                    </div>
-                    {!hasMusic && (
-                      <Check size={20} className="text-accent" />
-                    )}
-                  </button>
-
                   {/* Previously uploaded music files */}
                   {uploadedMusicFiles.length > 0 && (
                     <>
                       <div className="pt-2 pb-1 px-1 text-xs text-white/40 font-medium">
-                        Previously Uploaded (select multiple)
+                        Music Library (select multiple)
                       </div>
                       {uploadedMusicFiles.map((music) => {
                         const isSelected = selectedMusicPaths.includes(music.path)
@@ -811,11 +808,48 @@ export function ImportDialog({
                             {isSelected && (
                               <Check size={20} className="text-accent shrink-0" />
                             )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                deleteUploadedMusic(music.path)
+                              }}
+                              className="w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/20 hover:bg-red-500/30 text-red-400 shrink-0"
+                              title="Delete music file"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         )
                       })}
                     </>
                   )}
+
+                  {/* No music option */}
+                  <button
+                    onClick={() => {
+                      setSelectedMusicPaths([])
+                      setNewUploadedMusicList([])
+                    }}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                      !hasMusic
+                        ? 'bg-accent/20 border-accent text-white'
+                        : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      !hasMusic ? 'bg-accent/30' : 'bg-white/10'
+                    }`}>
+                      <VolumeX size={20} />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="font-medium">No Music</div>
+                      <div className="text-xs opacity-60">Silent slideshow</div>
+                    </div>
+                    {!hasMusic && (
+                      <Check size={20} className="text-accent" />
+                    )}
+                  </button>
                 </div>
               )}
 

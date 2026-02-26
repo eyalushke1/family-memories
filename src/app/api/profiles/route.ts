@@ -10,7 +10,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
+    .select('*')
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabase
     .from('profiles')
     .insert({ name: body.name.trim(), avatar_path: body.avatar_path, is_hidden: body.is_hidden })
-    .select('id, name, avatar_path, is_hidden, created_at, updated_at')
+    .select('*')
     .single()
 
   if (error) {

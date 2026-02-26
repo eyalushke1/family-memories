@@ -8,7 +8,8 @@ import { ToggleSwitch } from '@/components/admin/shared/toggle-switch'
 import { ConfirmDialog } from '@/components/admin/shared/confirm-dialog'
 import { MediaImage } from '@/components/shared/media-image'
 import { PresentationEditDialog } from '@/components/admin/presentations/presentation-edit-dialog'
-import { Pencil, Trash2, Clock, Presentation, AlertTriangle } from 'lucide-react'
+import { ClipPreviewModal } from '@/components/admin/clips/clip-preview-modal'
+import { Pencil, Trash2, Clock, Presentation, AlertTriangle, Play } from 'lucide-react'
 import type { ClipRow, CategoryRow } from '@/types/database'
 
 interface ClipListProps {
@@ -35,6 +36,7 @@ export function ClipList({
   const [deleteTarget, setDeleteTarget] = useState<ClipRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [editingPresentationId, setEditingPresentationId] = useState<string | null>(null)
+  const [previewClip, setPreviewClip] = useState<ClipRow | null>(null)
 
   const handleEditPresentation = (clip: ClipRow) => {
     if (clip.presentation?.id) {
@@ -141,6 +143,7 @@ export function ClipList({
                   onDelete={setDeleteTarget}
                   onToggleActive={handleToggleActive}
                   onEditPresentation={handleEditPresentation}
+                  onPreview={setPreviewClip}
                 />
               ))}
             </div>
@@ -163,6 +166,12 @@ export function ClipList({
             onSave={handlePresentationSaved}
           />
         )}
+        {previewClip && (
+          <ClipPreviewModal
+            clip={previewClip}
+            onClose={() => setPreviewClip(null)}
+          />
+        )}
       </>
     )
   }
@@ -175,7 +184,7 @@ export function ClipList({
           {clips.map((clip) => (
             <SortableItem key={clip.id} id={clip.id}>
               <div className="flex items-center gap-4">
-                <div className="w-32 h-18 flex-shrink-0">
+                <div className="w-32 h-18 flex-shrink-0 relative group/thumb">
                   <MediaImage
                     src={
                       clip.thumbnail_path
@@ -185,6 +194,14 @@ export function ClipList({
                     alt={clip.title}
                     className="w-full h-full object-cover rounded"
                   />
+                  {clip.video_path && clip.video_path !== 'pending' && (
+                    <button
+                      onClick={() => setPreviewClip(clip)}
+                      className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity bg-black/30 rounded"
+                    >
+                      <Play size={20} className="text-white" fill="white" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -259,6 +276,12 @@ export function ClipList({
           onSave={handlePresentationSaved}
         />
       )}
+      {previewClip && (
+        <ClipPreviewModal
+          clip={previewClip}
+          onClose={() => setPreviewClip(null)}
+        />
+      )}
     </>
   )
 }
@@ -269,15 +292,17 @@ interface ClipCardProps {
   onDelete: (clip: ClipRow) => void
   onToggleActive: (clip: ClipRow) => void
   onEditPresentation: (clip: ClipRow) => void
+  onPreview: (clip: ClipRow) => void
 }
 
-function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation }: ClipCardProps) {
+function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation, onPreview }: ClipCardProps) {
   const hasPresentation = !!clip.presentation?.id
   const hasMissingVideo = !clip.video_path || clip.video_path === 'pending'
+  const canPlay = !hasMissingVideo
 
   return (
     <div className={`bg-bg-card border rounded-xl overflow-hidden ${hasMissingVideo ? 'border-yellow-500/50' : 'border-border'}`}>
-      <div className="aspect-video relative">
+      <div className="aspect-video relative group">
         <MediaImage
           src={
             clip.thumbnail_path
@@ -287,6 +312,17 @@ function ClipCard({ clip, onEdit, onDelete, onToggleActive, onEditPresentation }
           alt={clip.title}
           className="w-full h-full object-cover"
         />
+        {/* Play button overlay */}
+        {canPlay && (
+          <button
+            onClick={() => onPreview(clip)}
+            className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30"
+          >
+            <div className="w-14 h-14 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
+              <Play size={24} className="text-black ml-1" fill="black" />
+            </div>
+          </button>
+        )}
         {clip.duration_seconds && (
           <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/80 rounded text-xs">
             {formatDuration(clip.duration_seconds)}

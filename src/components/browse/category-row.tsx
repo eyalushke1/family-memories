@@ -47,7 +47,7 @@ export function CategoryRow({ category }: CategoryRowProps) {
 
   return (
     <div className="group relative">
-      <h2 className="mb-2 px-12 text-lg font-semibold text-white tv:text-2xl">
+      <h2 className="mb-2 px-12 text-lg font-semibold text-text-primary tv:text-2xl">
         {category.name}
       </h2>
       <div className="relative">
