@@ -22,7 +22,9 @@ const TRANSCODE_DIR = '/tmp/transcode'
 
 /** Check if a video_path needs conversion (not already MP4/M4V) */
 export function needsConversion(videoPath: string): boolean {
-  if (!videoPath || videoPath === 'presentation') return false
+  if (!videoPath || videoPath === 'presentation' || videoPath === 'pending') return false
+  // Must have a file extension (contains a dot after a slash or at start)
+  if (!videoPath.includes('.')) return false
   const ext = '.' + videoPath.split('.').pop()?.toLowerCase()
   return !UNIVERSAL_VIDEO_EXTENSIONS.includes(ext)
 }

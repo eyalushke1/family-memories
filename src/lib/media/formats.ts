@@ -10,6 +10,10 @@ export const VIDEO_CONTENT_TYPES: Record<string, string> = {
   '.avi': 'video/x-msvideo',
   '.mkv': 'video/x-matroska',
   '.m4v': 'video/x-m4v',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv',
 }
 
 export const AUDIO_CONTENT_TYPES: Record<string, string> = {
@@ -64,7 +68,7 @@ export function getFormatWarning(filename: string): string | null {
 }
 
 /** Extensions that ALWAYS require server-side transcoding (never play in browsers) */
-export const TRANSCODE_EXTENSIONS = ['.avi', '.mkv']
+export const TRANSCODE_EXTENSIONS = ['.avi', '.mkv', '.mpg', '.mpeg', '.wmv', '.flv']
 
 /** Returns true if the format is known to never work in browsers */
 export function needsTranscoding(filename: string): boolean {
