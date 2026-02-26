@@ -52,6 +52,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   const [slidePhase, setSlidePhase] = useState<'entering' | 'visible' | 'exiting'>('entering')
   const [currentTransition, setCurrentTransition] = useState<Exclude<TransitionType, 'random'>>('fade')
 
+  // Use a persistent ref for the hidden <audio> element (better Smart TV compat than new Audio())
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const previousVideoRef = useRef<HTMLVideoElement | null>(null)
@@ -80,7 +81,8 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   , [backgroundMusicUrls, backgroundMusicUrl])
   const hasMusic = musicUrls.length > 0
   const currentTrackIndexRef = useRef(0)
-  const musicInitializedRef = useRef(false)
+  // Track whether music was paused for a video slide (to resume after)
+  const musicPausedForVideoRef = useRef(false)
 
   // Normalize slides to use mediaUrl (handle legacy imageUrl)
   const normalizedSlides = useMemo(() =>
@@ -301,88 +303,122 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     return () => clearTimeout(timer)
   }, [currentIndex, transitionDurationMs])
 
-  // Background music - initialize audio element once
-  useEffect(() => {
-    if (!hasMusic) return
+  // === BACKGROUND MUSIC (Smart TV compatible) ===
+  // Uses a persistent hidden <audio> DOM element instead of new Audio()
+  // This is the LG WebOS recommended approach for reliable playback.
 
-    const playTrack = (index: number) => {
-      if (index >= musicUrls.length) return // All tracks done
-      currentTrackIndexRef.current = index
-      const audio = new Audio(musicUrls[index])
-      audio.loop = false
-      audio.volume = 0.5
-      audio.muted = isMuted
-      audio.onended = () => {
-        // Play next track when current one ends
-        const nextIndex = index + 1
-        if (nextIndex < musicUrls.length) {
-          playTrack(nextIndex)
-        }
+  // Load a track into the persistent audio element
+  const loadTrack = useCallback((index: number) => {
+    const audio = audioRef.current
+    if (!audio || index >= musicUrls.length) return
+    currentTrackIndexRef.current = index
+    audio.src = musicUrls[index]
+    audio.load()
+  }, [musicUrls])
+
+  // Initialize first track and set up event handlers
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !hasMusic) return
+
+    const handleEnded = () => {
+      const nextIndex = currentTrackIndexRef.current + 1
+      if (nextIndex < musicUrls.length) {
+        loadTrack(nextIndex)
+        audio.play().catch(() => {})
       }
-      audio.onerror = () => {
-        // Skip to next track if this one fails to load (404, network error, etc.)
-        console.log(`[Music] Track ${index + 1} failed to load, skipping...`)
-        const nextIndex = index + 1
-        if (nextIndex < musicUrls.length) {
-          playTrack(nextIndex)
-        }
-      }
-      audioRef.current = audio
-      audio.play().catch((err) => {
-        console.log('[Music] Autoplay blocked, will retry on user interaction:', err.message)
-      })
     }
 
-    musicInitializedRef.current = false
-    playTrack(0)
-    musicInitializedRef.current = true
+    const handleError = () => {
+      console.log(`[Music] Track ${currentTrackIndexRef.current + 1} failed to load, skipping...`)
+      const nextIndex = currentTrackIndexRef.current + 1
+      if (nextIndex < musicUrls.length) {
+        loadTrack(nextIndex)
+        audio.play().catch(() => {})
+      }
+    }
+
+    audio.addEventListener('ended', handleEnded)
+    audio.addEventListener('error', handleError)
+
+    // Load first track
+    loadTrack(0)
+    audio.play().catch((err) => {
+      console.log('[Music] Autoplay blocked, will retry on user interaction:', err.message)
+    })
 
     return () => {
-      if (audioRef.current) {
-        audioRef.current.onended = null
-        audioRef.current.onerror = null
-        audioRef.current.pause()
-        audioRef.current = null
-      }
-      musicInitializedRef.current = false
+      audio.removeEventListener('ended', handleEnded)
+      audio.removeEventListener('error', handleError)
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
     }
-  // Only re-init when music URLs actually change
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMusic, musicUrls])
+  }, [hasMusic, musicUrls, loadTrack])
 
-  // Sync play/pause/mute state to existing audio element (without recreating it)
+  // Sync play/pause/mute to audio element (without recreating it)
   useEffect(() => {
-    if (!audioRef.current || !musicInitializedRef.current) return
+    const audio = audioRef.current
+    if (!audio || !hasMusic) return
 
-    audioRef.current.muted = isMuted
-    if (isPlaying) {
-      audioRef.current.play().catch(() => {})
-    } else {
-      audioRef.current.pause()
+    audio.muted = isMuted
+
+    // Don't resume music during video slides (hardware decoder conflict on Smart TVs)
+    if (isCurrentVideo) {
+      if (!audio.paused) {
+        audio.pause()
+        musicPausedForVideoRef.current = true
+      }
+      return
     }
-  }, [isPlaying, isMuted])
 
-  // Retry music playback on first user interaction (for autoplay-blocked browsers)
+    // Resume music after video slide ends
+    if (isPlaying && !isCurrentVideo) {
+      if (musicPausedForVideoRef.current || audio.paused) {
+        musicPausedForVideoRef.current = false
+        audio.play().catch(() => {})
+      }
+    } else if (!isPlaying) {
+      audio.pause()
+    }
+  }, [isPlaying, isMuted, isCurrentVideo, hasMusic])
+
+  // Retry music playback on first user interaction (for autoplay-blocked browsers & Smart TVs)
   useEffect(() => {
     if (!hasMusic) return
 
     const retryPlay = () => {
-      if (audioRef.current && audioRef.current.paused && isPlaying) {
-        audioRef.current.play().catch(() => {})
+      const audio = audioRef.current
+      if (audio && audio.paused && isPlaying && !isCurrentVideo) {
+        audio.play().catch(() => {})
       }
-      // Remove listeners after first successful interaction
-      document.removeEventListener('click', retryPlay)
-      document.removeEventListener('keydown', retryPlay)
     }
 
-    document.addEventListener('click', retryPlay, { once: true })
-    document.addEventListener('keydown', retryPlay, { once: true })
+    // Listen for any user interaction — remote control keys, clicks, touches
+    document.addEventListener('click', retryPlay)
+    document.addEventListener('keydown', retryPlay)
 
     return () => {
       document.removeEventListener('click', retryPlay)
       document.removeEventListener('keydown', retryPlay)
     }
-  }, [hasMusic, isPlaying])
+  }, [hasMusic, isPlaying, isCurrentVideo])
+
+  // Pause/resume on app visibility change (Smart TV app switching)
+  useEffect(() => {
+    const handleVisibility = () => {
+      const audio = audioRef.current
+      if (!audio) return
+      if (document.hidden) {
+        audio.pause()
+      } else if (isPlaying && !isCurrentVideo) {
+        audio.play().catch(() => {})
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [isPlaying, isCurrentVideo])
 
   // Auto-hide controls
   const showControlsTemporarily = useCallback(() => {
@@ -586,6 +622,15 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       onMouseMove={showControlsTemporarily}
       onClick={togglePlay}
     >
+      {/* Persistent hidden audio element for background music (Smart TV compatible) */}
+      {hasMusic && (
+        <audio
+          ref={audioRef}
+          preload="auto"
+          style={{ display: 'none' }}
+        />
+      )}
+
       {/* Previous slide (for crossfade during transition) */}
       {previousSlide && (
         <div className="absolute inset-0 flex items-center justify-center z-0">
