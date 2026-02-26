@@ -72,12 +72,15 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     muteVideoAudio = true
   } = presentationData
 
-  // Build the list of music URLs to play sequentially
-  const musicUrls = backgroundMusicUrls.length > 0
-    ? backgroundMusicUrls
-    : backgroundMusicUrl ? [backgroundMusicUrl] : []
+  // Build the list of music URLs to play sequentially (memoized to avoid effect re-runs)
+  const musicUrls = useMemo(() =>
+    backgroundMusicUrls.length > 0
+      ? backgroundMusicUrls
+      : backgroundMusicUrl ? [backgroundMusicUrl] : []
+  , [backgroundMusicUrls, backgroundMusicUrl])
   const hasMusic = musicUrls.length > 0
   const currentTrackIndexRef = useRef(0)
+  const musicInitializedRef = useRef(false)
 
   // Normalize slides to use mediaUrl (handle legacy imageUrl)
   const normalizedSlides = useMemo(() =>
@@ -298,7 +301,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
     return () => clearTimeout(timer)
   }, [currentIndex, transitionDurationMs])
 
-  // Background music - sequential multi-track playback
+  // Background music - initialize audio element once
   useEffect(() => {
     if (!hasMusic) return
 
@@ -315,33 +318,71 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
         if (nextIndex < musicUrls.length) {
           playTrack(nextIndex)
         }
-        // If last track, just stop (no loop)
+      }
+      audio.onerror = () => {
+        // Skip to next track if this one fails to load (404, network error, etc.)
+        console.log(`[Music] Track ${index + 1} failed to load, skipping...`)
+        const nextIndex = index + 1
+        if (nextIndex < musicUrls.length) {
+          playTrack(nextIndex)
+        }
       }
       audioRef.current = audio
-      if (isPlaying) {
-        audio.play().catch(() => {})
-      }
+      audio.play().catch((err) => {
+        console.log('[Music] Autoplay blocked, will retry on user interaction:', err.message)
+      })
     }
 
-    if (!audioRef.current) {
-      playTrack(0)
-    } else {
-      audioRef.current.muted = isMuted
-      if (isPlaying) {
-        audioRef.current.play().catch(() => {})
-      } else {
-        audioRef.current.pause()
-      }
-    }
+    musicInitializedRef.current = false
+    playTrack(0)
+    musicInitializedRef.current = true
 
     return () => {
       if (audioRef.current) {
         audioRef.current.onended = null
+        audioRef.current.onerror = null
         audioRef.current.pause()
         audioRef.current = null
       }
+      musicInitializedRef.current = false
     }
-  }, [hasMusic, musicUrls, isPlaying, isMuted])
+  // Only re-init when music URLs actually change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMusic, musicUrls])
+
+  // Sync play/pause/mute state to existing audio element (without recreating it)
+  useEffect(() => {
+    if (!audioRef.current || !musicInitializedRef.current) return
+
+    audioRef.current.muted = isMuted
+    if (isPlaying) {
+      audioRef.current.play().catch(() => {})
+    } else {
+      audioRef.current.pause()
+    }
+  }, [isPlaying, isMuted])
+
+  // Retry music playback on first user interaction (for autoplay-blocked browsers)
+  useEffect(() => {
+    if (!hasMusic) return
+
+    const retryPlay = () => {
+      if (audioRef.current && audioRef.current.paused && isPlaying) {
+        audioRef.current.play().catch(() => {})
+      }
+      // Remove listeners after first successful interaction
+      document.removeEventListener('click', retryPlay)
+      document.removeEventListener('keydown', retryPlay)
+    }
+
+    document.addEventListener('click', retryPlay, { once: true })
+    document.addEventListener('keydown', retryPlay, { once: true })
+
+    return () => {
+      document.removeEventListener('click', retryPlay)
+      document.removeEventListener('keydown', retryPlay)
+    }
+  }, [hasMusic, isPlaying])
 
   // Auto-hide controls
   const showControlsTemporarily = useCallback(() => {

@@ -48,7 +48,7 @@ steps:
       - '--port'
       - '3000'
       - '--timeout'
-      - '300'
+      - '900'
       - '--concurrency'
       - '80'
       - '--set-secrets'

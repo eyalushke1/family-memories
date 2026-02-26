@@ -6,7 +6,7 @@ import { ArrowLeft, SkipForward, Loader2, Play, VolumeX } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
-import { getFormatWarning, needsTranscoding } from '@/lib/media/formats'
+import { needsTranscoding, canTranscode } from '@/lib/media/formats'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -59,6 +59,7 @@ export default function WatchPage() {
   const [needsUserPlay, setNeedsUserPlay] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [isTranscoding, setIsTranscoding] = useState(false)
+  const [transcodeMessage, setTranscodeMessage] = useState<string>('')
   // Refs
   const introVideoRef = useRef<HTMLVideoElement>(null)
   const mainVideoRef = useRef<HTMLVideoElement>(null)
@@ -217,13 +218,21 @@ export default function WatchPage() {
       return true
     } catch (err) {
       const error = err as DOMException
-      console.error('[Player] Play failed:', error.name, error.message)
+
+      if (error.name === 'NotSupportedError') {
+        // Format not supported — the video's onError handler will trigger transcoding
+        console.log('[Player] Format not supported, transcoding will be triggered via error handler')
+        return false
+      }
 
       if (error.name === 'NotAllowedError') {
         // Autoplay completely blocked - show play button
+        console.log('[Player] Autoplay blocked, showing play button')
         setNeedsUserPlay(true)
         return false
       }
+
+      console.error('[Player] Play failed:', error.name, error.message)
       return false
     }
   }, [])
@@ -694,7 +703,6 @@ export default function WatchPage() {
     if (video?.error) {
       const errorCode = video.error.code
       const errorMessage = MEDIA_ERROR_MESSAGES[errorCode] || video.error.message || 'Unknown playback error'
-      console.error('[Player] Video error:', errorCode, errorMessage)
 
       // If format not supported (code 4) and using a signed URL,
       // fall back to proxy URL which serves correct Content-Type headers
@@ -710,43 +718,64 @@ export default function WatchPage() {
         return
       }
 
-      // On-demand transcoding for AVI/MKV files
-      if (errorCode === 4 && clip?.video_path && needsTranscoding(clip.video_path)) {
-        console.log('[Player] Format needs transcoding, requesting conversion:', clip.video_path)
+      // On-demand transcoding for any video format that fails to play
+      // Known formats (.avi, .mkv) always trigger this; others (.mov, .webm) trigger as fallback
+      if (errorCode === 4 && clip?.video_path && canTranscode(clip.video_path)) {
+        const isKnown = needsTranscoding(clip.video_path)
+        console.log(`[Player] Format ${isKnown ? 'requires' : 'failed, attempting'} transcoding:`, clip.video_path)
         setIsTranscoding(true)
+        setTranscodeMessage('Starting conversion...')
         setVideoError(null)
         setIsBuffering(false)
-        try {
-          const res = await fetch(`/api/media/transcode/${clip.video_path}`)
-          const json = await res.json()
-          if (json.success && json.url) {
-            console.log('[Player] Transcode complete, playing:', json.cached ? 'cached' : 'fresh')
-            video.src = json.url
-            video.load()
-            const success = await attemptPlay(video, true)
-            setIsTranscoding(false)
-            if (success) {
-              startStallDetection(video)
+
+        const pollTranscode = async (): Promise<string | null> => {
+          const MAX_POLLS = 400 // ~20 minutes at 3s intervals
+          for (let i = 0; i < MAX_POLLS; i++) {
+            try {
+              const res = await fetch(`/api/media/transcode/${clip!.video_path}`)
+              const json = await res.json()
+              if (json.success && json.url) {
+                return json.url
+              }
+              if (!json.success && json.error) {
+                console.error('[Player] Transcode error:', json.error)
+                return null
+              }
+              // Job in progress — update status message and continue polling
+              if (json.message) {
+                setTranscodeMessage(json.message)
+              }
+            } catch (err) {
+              console.error('[Player] Transcode poll failed:', err)
             }
-            return
+            // Wait 3 seconds before next poll
+            await new Promise((r) => setTimeout(r, 3000))
           }
-        } catch (err) {
-          console.error('[Player] Transcode request failed:', err)
+          return null
         }
+
+        const transcodedUrl = await pollTranscode()
+        if (transcodedUrl) {
+          console.log('[Player] Transcode complete, playing converted video')
+          video.src = transcodedUrl
+          video.load()
+          const success = await attemptPlay(video, true)
+          setIsTranscoding(false)
+          setTranscodeMessage('')
+          if (success) {
+            startStallDetection(video)
+          }
+          return
+        }
+
         setIsTranscoding(false)
+        setTranscodeMessage('')
         setVideoError('This video format could not be converted. Try re-uploading in MP4 format.')
         return
       }
 
-      // Provide format-specific guidance for unsupported format errors
-      if (errorCode === 4 && clip?.video_path) {
-        const formatHint = getFormatWarning(clip.video_path)
-        if (formatHint) {
-          setVideoError(`${formatHint}. Try re-uploading in MP4 format for best compatibility.`)
-          return
-        }
-      }
-
+      // Only log as error for truly unhandled cases
+      console.error('[Player] Video error:', errorCode, errorMessage)
       setVideoError(errorMessage)
     }
     setIsBuffering(false)
@@ -992,7 +1021,10 @@ export default function WatchPage() {
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-12 w-12 animate-spin text-accent" />
             <p className="text-white font-medium">Converting video...</p>
-            <p className="text-sm text-white/50">This may take a minute. The result will be cached for next time.</p>
+            {transcodeMessage && (
+              <p className="text-sm text-white/70">{transcodeMessage}</p>
+            )}
+            <p className="text-sm text-white/50">This may take a few minutes for long videos. The result will be saved permanently.</p>
           </div>
         </div>
       )}

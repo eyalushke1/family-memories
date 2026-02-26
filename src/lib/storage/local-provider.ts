@@ -99,4 +99,14 @@ export class LocalStorageProvider implements StorageProvider {
     await fs.copyFile(src, dest)
     return { path: destPath }
   }
+
+  async downloadToFile(storagePath: string, localPath: string): Promise<void> {
+    await fs.copyFile(this.resolvePath(storagePath), localPath)
+  }
+
+  async uploadFromFile(localPath: string, storagePath: string): Promise<void> {
+    const fullPath = this.resolvePath(storagePath)
+    await this.ensureDir(fullPath)
+    await fs.copyFile(localPath, fullPath)
+  }
 }

@@ -63,14 +63,24 @@ export function getFormatWarning(filename: string): string | null {
   return LIMITED_SUPPORT_EXTENSIONS[ext] ?? null
 }
 
-/** Extensions that require server-side transcoding to play in browsers */
+/** Extensions that ALWAYS require server-side transcoding (never play in browsers) */
 export const TRANSCODE_EXTENSIONS = ['.avi', '.mkv']
 
+/** Returns true if the format is known to never work in browsers */
 export function needsTranscoding(filename: string): boolean {
   const ext = '.' + filename.split('.').pop()?.toLowerCase()
   return TRANSCODE_EXTENSIONS.includes(ext)
 }
 
+/** Returns true if the file is a video that CAN be transcoded (any video format) */
+export function canTranscode(filename: string): boolean {
+  const ext = '.' + filename.split('.').pop()?.toLowerCase()
+  return ext in VIDEO_CONTENT_TYPES
+}
+
 export function getTranscodedPath(originalPath: string): string {
-  return `transcoded/${originalPath}.mp4`
+  // videos/abc-123/movie.avi → transcoded/videos/abc-123/movie.mp4
+  const lastDot = originalPath.lastIndexOf('.')
+  const withoutExt = lastDot > -1 ? originalPath.substring(0, lastDot) : originalPath
+  return `transcoded/${withoutExt}.mp4`
 }

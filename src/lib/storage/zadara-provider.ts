@@ -10,6 +10,10 @@ import {
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { NodeHttpHandler } from '@smithy/node-http-handler'
 import https from 'https'
+import { createWriteStream, createReadStream } from 'fs'
+import { stat } from 'fs/promises'
+import { pipeline } from 'stream/promises'
+import { Readable } from 'stream'
 import type { StorageProvider, StorageFile, UploadOptions, FileMetadata } from './types'
 
 interface ZadaraConfig {
@@ -215,5 +219,32 @@ export class ZadaraStorageProvider implements StorageProvider {
       })
     )
     return { path: destPath }
+  }
+
+  async downloadToFile(storagePath: string, localPath: string): Promise<void> {
+    const response = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: storagePath,
+      })
+    )
+    if (!response.Body) throw new Error(`Empty response for ${storagePath}`)
+    const nodeStream = response.Body as unknown as Readable
+    const fileStream = createWriteStream(localPath)
+    await pipeline(nodeStream, fileStream)
+  }
+
+  async uploadFromFile(localPath: string, storagePath: string, contentType: string): Promise<void> {
+    const fileStat = await stat(localPath)
+    const fileStream = createReadStream(localPath)
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.config.bucketName,
+        Key: storagePath,
+        Body: fileStream,
+        ContentType: contentType,
+        ContentLength: fileStat.size,
+      })
+    )
   }
 }

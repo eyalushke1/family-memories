@@ -182,6 +182,21 @@ export function PresentationEditDialog({
     fetchUploadedMusic()
   }, [])
 
+  // After both presentation data and music library are loaded,
+  // filter out stale music paths that no longer exist in storage
+  useEffect(() => {
+    if (!presentation || loadingMusic) return
+    const validPaths = new Set(uploadedMusicFiles.map((m) => m.path))
+    setSelectedMusicPaths((prev) => {
+      const filtered = prev.filter((p) => validPaths.has(p))
+      if (filtered.length !== prev.length) {
+        setHasChanges(true)
+      }
+      return filtered
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presentation, uploadedMusicFiles, loadingMusic])
+
   // Cleanup audio on unmount
   useEffect(() => {
     return () => {

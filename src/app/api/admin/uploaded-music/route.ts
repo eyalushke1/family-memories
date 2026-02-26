@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server'
 import { getStorage } from '@/lib/storage'
-import { checkAdmin } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 interface MusicMetadata {
@@ -21,10 +20,7 @@ interface MusicMetadata {
  * GET /api/admin/uploaded-music
  * List all previously uploaded music files from the temp storage with metadata
  */
-export async function GET(request: NextRequest) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
+export async function GET(_request: NextRequest) {
   try {
     const storage = getStorage()
 
@@ -102,9 +98,6 @@ export async function GET(request: NextRequest) {
  * Body: { path: string }
  */
 export async function DELETE(request: NextRequest) {
-  const adminErr = checkAdmin(request)
-  if (adminErr) return adminErr
-
   try {
     const { path } = await request.json()
     if (!path || typeof path !== 'string') {
