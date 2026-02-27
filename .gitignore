@@ -32,3 +32,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# WhatsApp bridge session data
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Local storage (dev only)
+.local-storage/
