@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
 import { needsTranscoding, canTranscode } from '@/lib/media/formats'
+import { trackViewStart, trackViewProgress, trackViewEnd } from '@/lib/analytics/track-view'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -70,6 +71,11 @@ export default function WatchPage() {
   const lastTimeCheckRef = useRef<number>(Date.now())
   const playStateRef = useRef<PlayState>('loading')
   const retryCountRef = useRef(0)
+  const viewEventIdRef = useRef<string | null>(null)
+  const hasTrackedStartRef = useRef(false)
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null)
+  const watchStartTimeRef = useRef<number>(0)
+  const clipTotalDurationRef = useRef<number>(0)
 
   // Keep ref in sync for use in async callbacks
   playStateRef.current = playState
@@ -798,6 +804,13 @@ export default function WatchPage() {
 
   const handleMainEnded = useCallback(() => {
     console.log('[Player] Video ended')
+    if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null }
+    const video = mainVideoRef.current
+    if (video && viewEventIdRef.current) {
+      const dur = (isFinite(video.duration) && video.duration > 0) ? video.duration : clipTotalDurationRef.current
+      trackViewEnd(viewEventIdRef.current, video.currentTime, dur, 100)
+      viewEventIdRef.current = null
+    }
     router.push('/browse')
   }, [router])
 
@@ -844,11 +857,93 @@ export default function WatchPage() {
     }, 4000)
   }, [needsUserPlay])
 
+  // Helper: get current watch progress — uses only refs so it works in any closure
+  function getWatchProgress() {
+    const video = mainVideoRef.current
+    const vidDur = video && isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+    if (vidDur > 0) {
+      const ct = video!.currentTime
+      return { ct, dur: vidDur, pct: Math.round((ct / vidDur) * 100) }
+    }
+    // Presentation / fallback: use refs (no state — avoids stale closures)
+    if (watchStartTimeRef.current > 0 && clipTotalDurationRef.current > 0) {
+      const totalDur = clipTotalDurationRef.current
+      const elapsed = (Date.now() - watchStartTimeRef.current) / 1000
+      const pct = Math.round(Math.min((elapsed / totalDur) * 100, 100))
+      return { ct: Math.round(elapsed), dur: Math.round(totalDur), pct }
+    }
+    return { ct: 0, dur: 0, pct: 0 }
+  }
+
+  // Analytics: start tracking + heartbeat when playState becomes 'main' or 'presentation'
+  useEffect(() => {
+    if (playState !== 'main' && playState !== 'presentation') return
+    if (hasTrackedStartRef.current) return
+
+    // Store total duration in ref for use in closures (beforeunload, cleanup, heartbeat)
+    if (presentationData) {
+      clipTotalDurationRef.current = presentationData.slides.reduce(
+        (sum, s) => sum + ((s.durationMs ?? presentationData.slideDurationMs) / 1000), 0
+      )
+    } else if (clip?.duration_seconds) {
+      clipTotalDurationRef.current = clip.duration_seconds
+    }
+
+    hasTrackedStartRef.current = true
+    watchStartTimeRef.current = Date.now()
+    const profileMatch = document.cookie.match(/fm-profile-id=([^;]+)/)
+    const profileId = profileMatch ? profileMatch[1] : null
+
+    trackViewStart(clipId, profileId, 'web').then((id) => {
+      viewEventIdRef.current = id
+      // Start heartbeat — updates progress every 15s
+      if (id && !heartbeatRef.current) {
+        heartbeatRef.current = setInterval(() => {
+          if (!viewEventIdRef.current) return
+          const { ct, dur, pct } = getWatchProgress()
+          trackViewProgress(viewEventIdRef.current, ct, dur, pct)
+        }, 15_000)
+      }
+    })
+  }, [playState, clipId, clip, presentationData])
+
+  // Analytics: beforeunload + visibilitychange for reliable tracking
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!viewEventIdRef.current || !hasTrackedStartRef.current) return
+      const { ct, dur, pct } = getWatchProgress()
+      trackViewEnd(viewEventIdRef.current, ct, dur, pct)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && viewEventIdRef.current) {
+        const { ct, dur, pct } = getWatchProgress()
+        trackViewProgress(viewEventIdRef.current, ct, dur, pct)
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current)
       if (stallCheckRef.current) clearInterval(stallCheckRef.current)
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current)
+
+      // Track view end on unmount
+      if (viewEventIdRef.current && hasTrackedStartRef.current) {
+        const { ct, dur, pct } = getWatchProgress()
+        trackViewEnd(viewEventIdRef.current, ct, dur, pct)
+        viewEventIdRef.current = null
+      }
 
       // Proper cleanup (MDN best practice)
       if (introVideoRef.current) {

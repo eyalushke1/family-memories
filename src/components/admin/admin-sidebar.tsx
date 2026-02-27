@@ -4,10 +4,11 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings, Zap } from 'lucide-react'
+import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings, Zap, BarChart3 } from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/admin/profiles', label: 'Profiles', icon: Users },
   { href: '/admin/categories', label: 'Categories', icon: FolderOpen },
   { href: '/admin/clips', label: 'Clips', icon: Film },

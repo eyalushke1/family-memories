@@ -332,6 +332,32 @@ export interface Database {
           updated_at?: string
         }
       }
+      view_events: {
+        Row: {
+          id: string
+          clip_id: string
+          profile_id: string | null
+          started_at: string
+          ended_at: string | null
+          duration_watched_seconds: number
+          clip_duration_seconds: number | null
+          completion_percent: number
+          device_type: string
+          created_at: string
+        }
+        Insert: {
+          clip_id: string
+          profile_id?: string | null
+          started_at?: string
+          device_type?: string
+        }
+        Update: {
+          ended_at?: string
+          duration_watched_seconds?: number
+          clip_duration_seconds?: number
+          completion_percent?: number
+        }
+      }
     }
   }
 }
@@ -387,3 +413,7 @@ export type UpdateCategoryMusic = Database['family_memories']['Tables']['categor
 export type KeepAliveProjectRow = Database['family_memories']['Tables']['supabase_keepalive_projects']['Row']
 export type InsertKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Insert']
 export type UpdateKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Update']
+
+export type ViewEventRow = Database['family_memories']['Tables']['view_events']['Row']
+export type InsertViewEvent = Database['family_memories']['Tables']['view_events']['Insert']
+export type UpdateViewEvent = Database['family_memories']['Tables']['view_events']['Update']
