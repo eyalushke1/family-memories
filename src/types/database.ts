@@ -332,6 +332,32 @@ export interface Database {
           updated_at?: string
         }
       }
+      shared_clips: {
+        Row: {
+          id: string
+          clip_id: string
+          share_token: string
+          created_by_profile_id: string | null
+          expires_at: string | null
+          is_active: boolean
+          view_count: number
+          last_viewed_at: string | null
+          created_at: string
+        }
+        Insert: {
+          clip_id: string
+          share_token: string
+          created_by_profile_id?: string | null
+          expires_at?: string | null
+          is_active?: boolean
+        }
+        Update: {
+          is_active?: boolean
+          view_count?: number
+          last_viewed_at?: string
+          expires_at?: string | null
+        }
+      }
       view_events: {
         Row: {
           id: string
@@ -413,6 +439,10 @@ export type UpdateCategoryMusic = Database['family_memories']['Tables']['categor
 export type KeepAliveProjectRow = Database['family_memories']['Tables']['supabase_keepalive_projects']['Row']
 export type InsertKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Insert']
 export type UpdateKeepAliveProject = Database['family_memories']['Tables']['supabase_keepalive_projects']['Update']
+
+export type SharedClipRow = Database['family_memories']['Tables']['shared_clips']['Row']
+export type InsertSharedClip = Database['family_memories']['Tables']['shared_clips']['Insert']
+export type UpdateSharedClip = Database['family_memories']['Tables']['shared_clips']['Update']
 
 export type ViewEventRow = Database['family_memories']['Tables']['view_events']['Row']
 export type InsertViewEvent = Database['family_memories']['Tables']['view_events']['Insert']

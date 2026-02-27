@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { LoadingSpinner } from '@/components/shared/loading-spinner'
 import { useProfileStore } from '@/stores/profile-store'
 import { useTVFocusable } from '@/components/tv/tv-navigation-context'
-import { Play, Clock, LogOut, User } from 'lucide-react'
+import { Play, Clock, LogOut, User, Share2 } from 'lucide-react'
+import { ShareDialog } from '@/components/watch/share-dialog'
 import type { ApiResponse } from '@/types/api'
 
 interface BrowseClip {
@@ -80,72 +81,96 @@ function TVClipCard({
   clipIndex: number
 }) {
   const router = useRouter()
+  const [showShareDialog, setShowShareDialog] = useState(false)
   const { ref, isFocused } = useTVFocusable(`clip-${clip.id}`, {
     row: categoryIndex,
     col: clipIndex,
   })
 
   return (
-    <button
-      ref={ref as React.Ref<HTMLButtonElement>}
-      onClick={() => router.push(`/tv/watch/${clip.id}`)}
-      className={`
-        group relative flex-shrink-0 rounded-xl overflow-hidden
-        transition-all duration-200 focus:outline-none
-        w-80 tv:w-96
-        ${isFocused
-          ? 'scale-110 ring-4 ring-accent z-10'
-          : 'hover:scale-105'
-        }
-      `}
-    >
-      {/* Thumbnail */}
-      <div className="aspect-video bg-bg-secondary relative">
-        {clip.thumbnail_url ? (
-          <img
-            src={clip.thumbnail_url}
-            alt={clip.title}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-accent/20 to-accent/5">
-            <Play size={48} className="text-white/30" />
-          </div>
-        )}
-
-        {/* Play overlay on focus */}
-        {isFocused && (
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-            <div className="w-16 h-16 rounded-full bg-accent flex items-center justify-center">
-              <Play size={32} className="text-white ml-1" />
+    <>
+      <div
+        ref={ref as React.Ref<HTMLDivElement>}
+        role="button"
+        tabIndex={0}
+        onClick={() => router.push(`/tv/watch/${clip.id}`)}
+        onKeyDown={(e) => { if (e.key === 'Enter') router.push(`/tv/watch/${clip.id}`) }}
+        className={`
+          group relative flex-shrink-0 rounded-xl overflow-hidden cursor-pointer
+          transition-all duration-200 focus:outline-none
+          w-80 tv:w-96
+          ${isFocused
+            ? 'scale-110 ring-4 ring-accent z-10'
+            : 'hover:scale-105'
+          }
+        `}
+      >
+        {/* Thumbnail */}
+        <div className="aspect-video bg-bg-secondary relative">
+          {clip.thumbnail_url ? (
+            <img
+              src={clip.thumbnail_url}
+              alt={clip.title}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-accent/20 to-accent/5">
+              <Play size={48} className="text-white/30" />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Duration badge */}
-        {clip.duration_seconds && (
-          <div className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 bg-black/80 rounded text-sm">
-            <Clock size={14} />
-            <span>{formatDuration(clip.duration_seconds)}</span>
-          </div>
-        )}
+          {/* Play overlay on focus */}
+          {isFocused && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+              <div className="w-16 h-16 rounded-full bg-accent flex items-center justify-center">
+                <Play size={32} className="text-white ml-1" />
+              </div>
+            </div>
+          )}
+
+          {/* Share button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowShareDialog(true) }}
+            className="absolute top-2 left-2 flex items-center gap-2 rounded-full bg-black/70 px-3 py-2 text-white transition-colors hover:bg-black/90 z-10"
+            title="Share clip"
+          >
+            <Share2 size={16} />
+            <span className="text-sm">Share</span>
+          </button>
+
+          {/* Duration badge */}
+          {clip.duration_seconds && (
+            <div className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 bg-black/80 rounded text-sm">
+              <Clock size={14} />
+              <span>{formatDuration(clip.duration_seconds)}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Title */}
+        <div className={`
+          p-4 bg-bg-secondary/80 transition-colors
+          ${isFocused ? 'bg-accent/20' : ''}
+        `}>
+          <h3 className="text-lg tv:text-xl font-medium truncate">
+            {clip.title}
+          </h3>
+          {clip.description && isFocused && (
+            <p className="mt-1 text-sm text-white/60 line-clamp-2">
+              {clip.description}
+            </p>
+          )}
+        </div>
       </div>
 
-      {/* Title */}
-      <div className={`
-        p-4 bg-bg-secondary/80 transition-colors
-        ${isFocused ? 'bg-accent/20' : ''}
-      `}>
-        <h3 className="text-lg tv:text-xl font-medium truncate">
-          {clip.title}
-        </h3>
-        {clip.description && isFocused && (
-          <p className="mt-1 text-sm text-white/60 line-clamp-2">
-            {clip.description}
-          </p>
-        )}
-      </div>
-    </button>
+      {/* Share dialog */}
+      <ShareDialog
+        clipId={clip.id}
+        clipTitle={clip.title}
+        open={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+      />
+    </>
   )
 }
 
