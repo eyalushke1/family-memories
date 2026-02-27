@@ -676,7 +676,7 @@ export default function WatchPage() {
         if (v && !v.paused && v.readyState < 3) {
           setIsBuffering(true)
         }
-      }, 6000)
+      }, 7000)
     }
   }, [])
 
