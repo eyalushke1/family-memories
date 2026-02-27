@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings, Zap, BarChart3 } from 'lucide-react'
+import { LayoutDashboard, Users, FolderOpen, Film, Play, Image, ArrowLeft, Settings, Zap, BarChart3, Share2 } from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
@@ -14,6 +14,7 @@ const navItems = [
   { href: '/admin/clips', label: 'Clips', icon: Film },
   { href: '/admin/intros', label: 'Intro Clips', icon: Play },
   { href: '/admin/google-photos', label: 'Google Photos', icon: Image },
+  { href: '/admin/shared-links', label: 'Shared Links', icon: Share2 },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
   { href: '/admin/supabase-keepalive', label: 'Keep-Alive', icon: Zap },
 ]
