@@ -8,6 +8,7 @@ import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
 import { needsTranscoding, canTranscode } from '@/lib/media/formats'
 import { trackViewStart, trackViewProgress, trackViewEnd } from '@/lib/analytics/track-view'
+import { detectDevice } from '@/lib/analytics/detect-device'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -894,7 +895,7 @@ export default function WatchPage() {
     const profileMatch = document.cookie.match(/fm-profile-id=([^;]+)/)
     const profileId = profileMatch ? profileMatch[1] : null
 
-    trackViewStart(clipId, profileId, 'web').then((id) => {
+    trackViewStart(clipId, profileId, detectDevice()).then((id) => {
       viewEventIdRef.current = id
       // Start heartbeat — updates progress every 15s
       if (id && !heartbeatRef.current) {

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { VALID_DEVICE_TYPES } from '@/lib/analytics/detect-device'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -55,7 +56,9 @@ export async function POST(request: NextRequest) {
     if (!isValidUUID(clipId)) return errorResponse('clipId must be a valid UUID', 400)
     if (profileId != null && !isValidUUID(profileId)) return errorResponse('profileId must be a valid UUID', 400)
 
-    const device = deviceType === 'tv' ? 'tv' : 'web'
+    const device = typeof deviceType === 'string' && VALID_DEVICE_TYPES.has(deviceType)
+      ? deviceType
+      : 'web'
 
     const { data, error } = await supabase
       .from('view_events')

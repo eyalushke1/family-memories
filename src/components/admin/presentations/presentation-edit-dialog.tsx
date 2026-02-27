@@ -23,6 +23,8 @@ import {
   Plus,
   ImagePlus,
 } from 'lucide-react'
+import { SortableList } from '@/components/admin/shared/sortable-list'
+import { SortableItem } from '@/components/admin/shared/sortable-item'
 import type { PresentationRow, PresentationSlideRow } from '@/types/database'
 
 interface UploadedMusicFile {
@@ -236,6 +238,14 @@ export function PresentationEditDialog({
     setSelectedMusicPaths((prev) =>
       prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]
     )
+    setHasChanges(true)
+  }
+
+  const getMusicFileByPath = (path: string) =>
+    uploadedMusicFiles.find((m) => m.path === path)
+
+  const handleMusicReorder = (reorderedItems: { id: string }[]) => {
+    setSelectedMusicPaths(reorderedItems.map((item) => item.id))
     setHasChanges(true)
   }
 
@@ -1216,6 +1226,44 @@ export function PresentationEditDialog({
                       <Check size={20} className="text-accent" />
                     )}
                   </button>
+                </div>
+              )}
+
+              {/* Track playback order */}
+              {selectedMusicPaths.length >= 2 && (
+                <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10">
+                  <label className="flex items-center gap-2 text-sm font-medium text-white/80 mb-3">
+                    <GripVertical size={16} />
+                    Track Playback Order
+                  </label>
+                  <p className="text-xs text-white/50 mb-3">
+                    Drag to reorder — tracks play from top to bottom
+                  </p>
+                  <SortableList
+                    items={selectedMusicPaths.map((path) => ({ id: path }))}
+                    onReorder={handleMusicReorder}
+                  >
+                    {selectedMusicPaths.map((path, index) => {
+                      const musicFile = getMusicFileByPath(path)
+                      return (
+                        <SortableItem key={path} id={path}>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-mono text-accent w-5 text-center shrink-0">
+                              {index + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm text-white truncate">
+                                {musicFile?.displayName || musicFile?.filename || path.split('/').pop()}
+                              </div>
+                              {musicFile?.durationFormatted && (
+                                <div className="text-xs text-white/50">{musicFile.durationFormatted}</div>
+                              )}
+                            </div>
+                          </div>
+                        </SortableItem>
+                      )
+                    })}
+                  </SortableList>
                 </div>
               )}
 

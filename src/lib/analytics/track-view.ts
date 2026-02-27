@@ -1,7 +1,7 @@
 export async function trackViewStart(
   clipId: string,
   profileId: string | null,
-  deviceType: 'web' | 'tv'
+  deviceType: string
 ): Promise<string | null> {
   try {
     const res = await fetch('/api/analytics/track', {

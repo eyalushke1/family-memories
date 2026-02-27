@@ -18,6 +18,7 @@ import {
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { useTVNavigation } from '@/components/tv/tv-navigation-context'
 import { trackViewStart, trackViewProgress, trackViewEnd } from '@/lib/analytics/track-view'
+import { detectDevice } from '@/lib/analytics/detect-device'
 import type { ApiResponse } from '@/types/api'
 import type { ClipRow, IntroClipRow } from '@/types/database'
 
@@ -535,7 +536,9 @@ export default function TVWatchPage() {
     const profileMatch = document.cookie.match(/fm-profile-id=([^;]+)/)
     const profileId = profileMatch ? profileMatch[1] : null
 
-    trackViewStart(clipId, profileId, 'tv').then((id) => {
+    const detectedDevice = detectDevice()
+    const device = detectedDevice === 'other' ? 'tv' : detectedDevice
+    trackViewStart(clipId, profileId, device).then((id) => {
       viewEventIdRef.current = id
       if (id && !heartbeatRef.current) {
         heartbeatRef.current = setInterval(() => {

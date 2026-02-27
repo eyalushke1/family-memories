@@ -53,6 +53,14 @@ export interface ProfileWatchTimeDataPoint {
   color: string
 }
 
+export interface DeviceBreakdownDataPoint {
+  deviceType: string
+  label: string
+  views: number
+  watchTimeMinutes: number
+  color: string
+}
+
 export interface AnalyticsData {
   metrics: AnalyticsMetrics
   dailyViews: DailyViewsDataPoint[]
@@ -60,4 +68,5 @@ export interface AnalyticsData {
   recentViews: RecentViewEntry[]
   profileStats: ProfileStats[]
   profileWatchTimeDistribution: ProfileWatchTimeDataPoint[]
+  deviceBreakdown: DeviceBreakdownDataPoint[]
 }

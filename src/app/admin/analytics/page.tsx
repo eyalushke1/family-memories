@@ -9,6 +9,7 @@ import { TopClipsChart } from '@/components/admin/analytics/top-clips-chart'
 import { ActivityTable } from '@/components/admin/analytics/activity-table'
 import { ProfileWatchTimeChart } from '@/components/admin/analytics/profile-watch-time-chart'
 import { ProfileStatsTable } from '@/components/admin/analytics/profile-stats-table'
+import { DeviceBreakdownChart } from '@/components/admin/analytics/device-breakdown-chart'
 
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState<DateRange>('30d')
@@ -85,9 +86,10 @@ export default function AnalyticsPage() {
       </div>
 
       <div className="mt-10 pt-10 border-t border-border">
-        <h2 className="text-2xl font-bold mb-6">Profile Analysis</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <h2 className="text-2xl font-bold mb-6">Insights</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <ProfileWatchTimeChart data={data.profileWatchTimeDistribution} />
+          <DeviceBreakdownChart data={data.deviceBreakdown} />
           <div className="lg:col-span-2">
             <ProfileStatsTable data={data.profileStats} />
           </div>

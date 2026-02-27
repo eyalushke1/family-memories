@@ -9,6 +9,34 @@ const PROFILE_COLORS = [
   '#ec4899', '#14b8a6', '#f97316', '#3b82f6', '#84cc16',
 ]
 
+const DEVICE_LABELS: Record<string, string> = {
+  iphone: 'iPhone',
+  ipad: 'iPad',
+  android: 'Android',
+  mac: 'Mac',
+  'windows-pc': 'Windows PC',
+  linux: 'Linux',
+  'lg-tv': 'LG TV',
+  'samsung-tv': 'Samsung TV',
+  tv: 'Smart TV',
+  web: 'Web',
+  other: 'Other',
+}
+
+const DEVICE_COLORS: Record<string, string> = {
+  iphone: '#3b82f6',
+  ipad: '#60a5fa',
+  android: '#10b981',
+  mac: '#8b5cf6',
+  'windows-pc': '#6366f1',
+  linux: '#f97316',
+  'lg-tv': '#ef4444',
+  'samsung-tv': '#ec4899',
+  tv: '#f59e0b',
+  web: '#14b8a6',
+  other: '#6b7280',
+}
+
 function getRangeDays(range: DateRange): number | null {
   switch (range) {
     case '7d': return 7
@@ -211,6 +239,26 @@ export async function GET(request: NextRequest) {
       color: PROFILE_COLORS[i % PROFILE_COLORS.length],
     }))
 
+    // ── Device breakdown ──
+    const deviceAgg = new Map<string, { views: number; watchSeconds: number }>()
+    for (const v of currentViews) {
+      const dt = v.device_type || 'web'
+      if (!deviceAgg.has(dt)) deviceAgg.set(dt, { views: 0, watchSeconds: 0 })
+      const agg = deviceAgg.get(dt)!
+      agg.views++
+      agg.watchSeconds += v.duration_watched_seconds || 0
+    }
+
+    const deviceBreakdown = Array.from(deviceAgg.entries())
+      .sort(([, a], [, b]) => b.views - a.views)
+      .map(([deviceType, agg]) => ({
+        deviceType,
+        label: DEVICE_LABELS[deviceType] || deviceType,
+        views: agg.views,
+        watchTimeMinutes: Math.round(agg.watchSeconds / 60),
+        color: DEVICE_COLORS[deviceType] || '#6b7280',
+      }))
+
     // ── Recent views ──
     const recentViews = [...currentViews]
       .sort((a, b) => b.started_at.localeCompare(a.started_at))
@@ -237,6 +285,7 @@ export async function GET(request: NextRequest) {
       recentViews,
       profileStats,
       profileWatchTimeDistribution,
+      deviceBreakdown,
     }
 
     return successResponse(analyticsData)
