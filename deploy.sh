@@ -9,6 +9,8 @@
 #      gcloud services enable cloudbuild.googleapis.com
 #      gcloud services enable run.googleapis.com
 #      gcloud services enable secretmanager.googleapis.com
+#      gcloud services enable artifactregistry.googleapis.com
+#   5. Run setup: ./setup-secrets.sh
 #
 # Usage:
 #   ./deploy.sh [region] [service-name]

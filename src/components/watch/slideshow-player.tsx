@@ -120,7 +120,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
   // Preload next media
   useEffect(() => {
-    const toPreload = [currentIndex, currentIndex + 1, currentIndex + 2]
+    const toPreload = [currentIndex, currentIndex + 1, currentIndex + 2, currentIndex + 3]
       .filter((i) => i < totalSlides && !preloadedMedia.has(i))
 
     if (toPreload.length > 0) {

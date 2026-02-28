@@ -1,27 +1,35 @@
 # Google Cloud Build configuration for Cloud Run deployment
 #
-# Deploy to existing project:
+# Prerequisites:
+#   1. Create Artifact Registry repo:
+#      gcloud artifacts repositories create family-memories --repository-format=docker --location=us-central1
+#   2. Create secrets: ./setup-secrets.sh
+#   3. Grant access: see setup-secrets.sh output
+#
+# Deploy:
 #   gcloud builds submit --config cloudbuild.yaml
 #
-# Or connect GitHub for automatic deploys (see instructions below)
+# Or connect GitHub for automatic deploys
 
 steps:
   # Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_APP_NAME=Family Memories'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$COMMIT_SHA'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:latest'
       - '.'
 
-  # Push the image to Container Registry
+  # Push the image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$COMMIT_SHA']
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest']
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:latest']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -31,7 +39,7 @@ steps:
       - 'deploy'
       - '${_SERVICE_NAME}'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$COMMIT_SHA'
       - '--region'
       - '${_REGION}'
       - '--platform'
@@ -52,17 +60,18 @@ steps:
       - '--concurrency'
       - '80'
       - '--set-secrets'
-      - 'SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_KEY=SUPABASE_KEY:latest,SUPABASE_SCHEMA=SUPABASE_SCHEMA:latest,STORAGE_TYPE=STORAGE_TYPE:latest,ZADARA_ENDPOINT=ZADARA_ENDPOINT:latest,ZADARA_ACCESS_KEY_ID=ZADARA_ACCESS_KEY_ID:latest,ZADARA_SECRET_ACCESS_KEY=ZADARA_SECRET_ACCESS_KEY:latest,ZADARA_BUCKET_NAME=ZADARA_BUCKET_NAME:latest,ZADARA_PUBLIC_URL=ZADARA_PUBLIC_URL:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,CRON_SECRET=CRON_SECRET:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest'
+      - 'SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_KEY=SUPABASE_KEY:latest,SUPABASE_SCHEMA=SUPABASE_SCHEMA:latest,STORAGE_TYPE=STORAGE_TYPE:latest,ZADARA_ENDPOINT=ZADARA_ENDPOINT:latest,ZADARA_ACCESS_KEY_ID=ZADARA_ACCESS_KEY_ID:latest,ZADARA_SECRET_ACCESS_KEY=ZADARA_SECRET_ACCESS_KEY:latest,ZADARA_BUCKET_NAME=ZADARA_BUCKET_NAME:latest,ZADARA_PUBLIC_URL=ZADARA_PUBLIC_URL:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,CRON_SECRET=CRON_SECRET:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,WHATSAPP_API_URL=WHATSAPP_API_URL:latest,WHATSAPP_API_KEY=WHATSAPP_API_KEY:latest'
       - '--set-env-vars'
-      - 'KEEPALIVE_INTERVAL_HOURS=12,NEXT_PUBLIC_APP_URL=https://family-memories-651724094230.us-central1.run.app,GOOGLE_REDIRECT_URI=https://family-memories-651724094230.us-central1.run.app/api/auth/google/callback'
+      - 'KEEPALIVE_INTERVAL_HOURS=12,ZADARA_REGION=us-east-1,NEXT_PUBLIC_APP_NAME=Family Memories,NEXT_PUBLIC_APP_URL=https://family-memories-651724094230.us-central1.run.app,GOOGLE_REDIRECT_URI=https://family-memories-651724094230.us-central1.run.app/api/auth/google/callback'
 
 images:
-  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
-  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:$COMMIT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_SERVICE_NAME}:latest'
 
 substitutions:
   _REGION: us-central1
   _SERVICE_NAME: family-memories
+  _REPO_NAME: family-memories
 
 options:
   logging: CLOUD_LOGGING_ONLY
