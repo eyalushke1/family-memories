@@ -10,6 +10,7 @@
     "lint": "next lint",
     "seed": "npx tsx scripts/seed.ts",
     "test:zadara": "npx tsx scripts/test-zadara.ts",
+    "migrate:storage": "npx tsx scripts/migrate-storage.ts",
     "whatsapp": "npx wweb-mcp --mode whatsapp-api --api-port 3001 -s local"
   },
   "repository": {
