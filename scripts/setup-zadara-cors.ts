@@ -7,8 +7,10 @@
  * Usage: npx tsx scripts/setup-zadara-cors.ts
  */
 
+import { config } from 'dotenv'
+config({ path: '.env.local' })
+
 import { S3Client, PutBucketCorsCommand, GetBucketCorsCommand } from '@aws-sdk/client-s3'
-import 'dotenv/config'
 
 const client = new S3Client({
   endpoint: process.env.ZADARA_ENDPOINT,
