@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   const validation = validateGoogleConfig()
   if (!validation.valid) {
     return NextResponse.json(
-      { success: false, error: validation.error },
+      { success: false, error: 'Google OAuth not configured' },
       { status: 500 }
     )
   }
@@ -21,13 +21,21 @@ export async function GET(request: NextRequest) {
   // Get profile ID (already verified as admin)
   const profileId = getProfileId(request)!
 
-  // Generate state token (profile ID + random bytes for CSRF protection)
+  // Generate state token with CSRF nonce
   const randomState = randomBytes(16).toString('hex')
   const state = Buffer.from(JSON.stringify({ profileId, random: randomState })).toString('base64url')
 
   // Get authorization URL
   const authUrl = getAuthorizationUrl(state)
 
-  // Redirect to Google
-  return NextResponse.redirect(authUrl)
+  // Store the CSRF nonce in a signed cookie for verification on callback
+  const response = NextResponse.redirect(authUrl)
+  response.cookies.set('oauth-state', randomState, {
+    path: '/',
+    maxAge: 600, // 10 minutes
+    sameSite: 'lax',
+    httpOnly: true,
+  })
+
+  return response
 }

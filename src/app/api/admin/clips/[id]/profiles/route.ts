@@ -20,7 +20,7 @@ export async function GET(
 
   if (error) {
     console.error('Failed to fetch clip profiles:', error)
-    return errorResponse(`Failed to fetch clip profiles: ${error.message}`)
+    return errorResponse('Failed to fetch clip profiles')
   }
 
   const profileIds = data.map((row) => row.profile_id)
@@ -47,7 +47,7 @@ export async function PUT(
 
   if (deleteError) {
     console.error('Failed to delete clip profiles:', deleteError)
-    return errorResponse(`Failed to update clip profiles: ${deleteError.message}`)
+    return errorResponse('Failed to update clip profiles')
   }
 
   // Insert new associations
@@ -63,7 +63,7 @@ export async function PUT(
 
     if (insertError) {
       console.error('Failed to insert clip profiles:', insertError)
-      return errorResponse(`Failed to update clip profiles: ${insertError.message}`)
+      return errorResponse('Failed to update clip profiles')
     }
   }
 

@@ -1,27 +1,22 @@
 import { NextRequest } from 'next/server'
 import { createPhotosClient } from '@/lib/google/photos-client'
+import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ albumId: string }> }
 ) {
-  // Get profile ID from cookie
-  const profileId = request.cookies.get('fm-profile-id')?.value
+  const adminErr = await checkAdmin(request)
+  if (adminErr) return adminErr
 
-  if (!profileId) {
-    return errorResponse('Profile not selected', 401)
-  }
-
+  const profileId = getProfileId(request)!
   const { albumId } = await params
 
   try {
-    // Use factory pattern per standards - client handles token management internally
     const client = createPhotosClient(profileId)
     const mediaItems = await client.getAllAlbumMedia(albumId)
 
-    // Transform to include download URLs
-    // Per standards: baseUrl expires after ~60 minutes, but thumbnails are fine for display
     const media = mediaItems.map((item) => ({
       id: item.id,
       filename: item.filename,
@@ -39,7 +34,6 @@ export async function GET(
     return successResponse(media)
   } catch (err) {
     console.error('Failed to fetch album media:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to fetch media: ${message}`)
+    return errorResponse('Failed to fetch media')
   }
 }

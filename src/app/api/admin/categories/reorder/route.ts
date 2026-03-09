@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { isValidUUID } from '@/lib/api/signed-cookie'
 
 export async function PATCH(request: NextRequest) {
   const err = checkSupabase()
@@ -11,6 +12,11 @@ export async function PATCH(request: NextRequest) {
 
   if (!Array.isArray(ids) || ids.length === 0) {
     return errorResponse('ids array is required', 400)
+  }
+
+  // Validate each ID is a valid UUID
+  if (!ids.every((id: unknown) => typeof id === 'string' && isValidUUID(id))) {
+    return errorResponse('All IDs must be valid UUIDs', 400)
   }
 
   // Update sort_order for each category

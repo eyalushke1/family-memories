@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('Failed to fetch clips:', error)
-    return errorResponse(`Failed to fetch clips: ${error.message}`)
+    return errorResponse('Failed to fetch clips')
   }
 
   return successResponse(data)

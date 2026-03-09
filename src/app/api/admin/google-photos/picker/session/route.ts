@@ -27,6 +27,6 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error('Failed to create picker session:', err)
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to create session: ${message}`)
+    return errorResponse('Failed to create session')
   }
 }

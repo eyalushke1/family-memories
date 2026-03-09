@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       console.error(`Image proxy error: ${response.status}`)
-      return errorResponse(`Failed to fetch image: ${response.status}`, response.status)
+      return errorResponse('Failed to fetch image', response.status)
     }
 
     // Get the image data

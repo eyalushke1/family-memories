@@ -2,7 +2,6 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
-import type { UpdateProfile } from '@/types/database'
 
 export async function GET(
   _request: NextRequest,
@@ -35,18 +34,23 @@ export async function PATCH(
   if (err) return err
 
   const { id } = await params
-  const body: UpdateProfile = await request.json()
+  const body = await request.json()
+
+  // Whitelist allowed fields - never allow is_admin via public API
+  const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (body.name !== undefined) updateData.name = body.name
+  if (body.avatar_path !== undefined) updateData.avatar_path = body.avatar_path
 
   const { data, error } = await supabase
     .from('profiles')
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update(updateData)
     .eq('id', id)
     .select('id, name, avatar_path, is_admin, created_at, updated_at')
     .single()
 
   if (error) {
     console.error('Failed to update profile:', error)
-    return errorResponse(`Failed to update profile: ${error.message}`)
+    return errorResponse('Failed to update profile')
   }
 
   return successResponse(data)
@@ -68,7 +72,7 @@ export async function DELETE(
 
   if (error) {
     console.error('Failed to delete profile:', error)
-    return errorResponse(`Failed to delete profile: ${error.message}`)
+    return errorResponse('Failed to delete profile')
   }
 
   return successResponse({ deleted: true })

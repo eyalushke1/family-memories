@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error('Failed to fetch clips:', error)
-    return errorResponse(`Failed to fetch clips: ${error.message}`)
+    return errorResponse('Failed to fetch clips')
   }
 
   // Transform presentation array to single object (Supabase returns one-to-many as array)
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('Failed to create clip:', error)
-    return errorResponse(`Failed to create clip: ${error.message}`)
+    return errorResponse('Failed to create clip')
   }
 
   return successResponse(data, 201)

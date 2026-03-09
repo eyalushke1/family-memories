@@ -23,16 +23,27 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Parse state to get profile ID
+  // Parse state to get profile ID and CSRF nonce
   let profileId: string
+  let stateRandom: string
   try {
     const stateData = JSON.parse(Buffer.from(state, 'base64url').toString())
     profileId = stateData.profileId
-    if (!profileId) {
-      throw new Error('Missing profile ID in state')
+    stateRandom = stateData.random
+    if (!profileId || !stateRandom) {
+      throw new Error('Missing fields in state')
     }
   } catch {
     console.error('Failed to parse OAuth state')
+    return NextResponse.redirect(
+      new URL('/admin/google-photos?error=invalid_state', request.url)
+    )
+  }
+
+  // Verify CSRF: compare state nonce against cookie
+  const storedNonce = request.cookies.get('oauth-state')?.value
+  if (!storedNonce || storedNonce !== stateRandom) {
+    console.error('OAuth state CSRF verification failed')
     return NextResponse.redirect(
       new URL('/admin/google-photos?error=invalid_state', request.url)
     )
@@ -63,8 +74,10 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Redirect back to Google Photos page
-  return NextResponse.redirect(
+  // Clear the oauth-state cookie and redirect
+  const response = NextResponse.redirect(
     new URL('/admin/google-photos?connected=true', request.url)
   )
+  response.cookies.set('oauth-state', '', { path: '/', maxAge: 0 })
+  return response
 }

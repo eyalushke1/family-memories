@@ -15,7 +15,7 @@ export async function GET() {
 
   if (error) {
     console.error('Failed to fetch intro clips:', error)
-    return errorResponse(`Failed to fetch intro clips: ${error.message}`)
+    return errorResponse('Failed to fetch intro clips')
   }
 
   return successResponse(data)
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('Failed to create intro clip:', error)
-    return errorResponse(`Failed to create intro clip: ${error.message}`)
+    return errorResponse('Failed to create intro clip')
   }
 
   return successResponse(data, 201)

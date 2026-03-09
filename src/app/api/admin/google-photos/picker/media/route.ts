@@ -62,6 +62,6 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error('Failed to list picker media:', err)
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to list media: ${message}`)
+    return errorResponse('Failed to list media')
   }
 }

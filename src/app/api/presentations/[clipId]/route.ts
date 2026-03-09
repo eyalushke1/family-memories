@@ -33,7 +33,7 @@ export async function GET(
 
   if (slidesError) {
     console.error('Failed to fetch slides:', slidesError)
-    return errorResponse(`Failed to fetch slides: ${slidesError.message}`)
+    return errorResponse('Failed to fetch slides')
   }
 
   // Helper to detect media type from path if not stored

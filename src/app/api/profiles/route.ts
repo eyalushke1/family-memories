@@ -15,7 +15,7 @@ export async function GET() {
 
   if (error) {
     console.error('Failed to fetch profiles:', error)
-    return errorResponse(`Failed to fetch profiles: ${error.message}`)
+    return errorResponse('Failed to fetch profiles')
   }
 
   return successResponse(data)
@@ -31,15 +31,16 @@ export async function POST(request: NextRequest) {
     return errorResponse('Name is required', 400)
   }
 
+  // Never allow is_admin to be set via public API
   const { data, error } = await supabase
     .from('profiles')
-    .insert({ name: body.name.trim(), avatar_path: body.avatar_path, is_admin: body.is_admin })
+    .insert({ name: body.name.trim(), avatar_path: body.avatar_path, is_admin: false })
     .select('id, name, avatar_path, is_admin, created_at, updated_at')
     .single()
 
   if (error) {
     console.error('Failed to create profile:', error)
-    return errorResponse(`Failed to create profile: ${error.message}`)
+    return errorResponse('Failed to create profile')
   }
 
   return successResponse(data, 201)

@@ -47,10 +47,6 @@ export async function exchangeCodeForTokens(code: string): Promise<GoogleTokens>
 
   const { tokens } = await oauth2Client.getToken(code)
 
-  console.log('Token exchange - received scope:', tokens.scope)
-  console.log('Token exchange - has access_token:', !!tokens.access_token)
-  console.log('Token exchange - has refresh_token:', !!tokens.refresh_token)
-
   if (!tokens.access_token || !tokens.refresh_token) {
     throw new Error('Missing access_token or refresh_token in response')
   }
@@ -142,27 +138,20 @@ export async function getValidAccessToken(profileId: string): Promise<string | n
   const tokens = await getStoredTokens(profileId)
 
   if (!tokens) {
-    console.log('[OAuth Debug] No tokens found for profile:', profileId)
     return null
   }
-
-  console.log('[OAuth Debug] Stored token scope:', tokens.scope)
-  console.log('[OAuth Debug] Expected scope:', GOOGLE_OAUTH_CONFIG.scopes.join(' '))
-  console.log('[OAuth Debug] Token expires at:', tokens.expiresAt)
 
   // Check if token is expired (with 5-minute buffer)
   const isExpired = tokens.expiresAt.getTime() < Date.now() + 5 * 60 * 1000
 
   if (isExpired) {
-    console.log('[OAuth Debug] Token expired, refreshing...')
     try {
       const newTokens = await refreshAccessToken(tokens.refreshToken)
-      console.log('[OAuth Debug] Refreshed token scope:', newTokens.scope)
       await storeTokens(profileId, newTokens)
       return newTokens.accessToken
     } catch (err) {
       // Refresh failed - token may be revoked
-      console.error('[OAuth Debug] Token refresh failed:', err)
+      console.error('Token refresh failed:', err)
       return null
     }
   }

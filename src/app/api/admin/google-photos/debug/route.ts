@@ -1,17 +1,24 @@
 import { NextRequest } from 'next/server'
 import { getValidAccessToken } from '@/lib/google/oauth'
+import { checkAdmin } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { getProfileId } from '@/lib/api/admin-check'
 
 /**
  * GET /api/admin/google-photos/debug
- * Debug endpoint to check token validity and actual scopes from Google
+ * Debug endpoint to check token validity and scopes (admin only).
+ * Only enabled when NODE_ENV !== 'production'.
  */
 export async function GET(request: NextRequest) {
-  const profileId = request.cookies.get('fm-profile-id')?.value
-
-  if (!profileId) {
-    return errorResponse('Profile not selected', 401)
+  // Only allow in non-production environments
+  if (process.env.NODE_ENV === 'production') {
+    return errorResponse('Debug endpoint not available in production', 404)
   }
+
+  const adminErr = await checkAdmin(request)
+  if (adminErr) return adminErr
+
+  const profileId = getProfileId(request)!
 
   try {
     const accessToken = await getValidAccessToken(profileId)
@@ -27,8 +34,6 @@ export async function GET(request: NextRequest) {
 
     const tokenInfo = await tokenInfoRes.json()
 
-    console.log('[Debug] Token info from Google:', JSON.stringify(tokenInfo, null, 2))
-
     // Also try a direct call to Photos API
     const photosApiRes = await fetch(
       'https://photoslibrary.googleapis.com/v1/albums?pageSize=1',
@@ -43,9 +48,6 @@ export async function GET(request: NextRequest) {
     const photosApiStatus = photosApiRes.status
     const photosApiBody = await photosApiRes.text()
 
-    console.log('[Debug] Photos API response status:', photosApiStatus)
-    console.log('[Debug] Photos API response body:', photosApiBody)
-
     let photosApiResult
     try {
       photosApiResult = JSON.parse(photosApiBody)
@@ -53,18 +55,18 @@ export async function GET(request: NextRequest) {
       photosApiResult = photosApiBody
     }
 
+    // Return diagnostic info without token preview
     return successResponse({
       tokenValid: tokenInfoRes.ok,
-      tokenInfo,
-      tokenPreview: `${accessToken.substring(0, 20)}...`,
+      scopes: tokenInfo.scope?.split(' ') ?? [],
+      expiresIn: tokenInfo.expires_in,
       photosApi: {
         status: photosApiStatus,
-        response: photosApiResult,
+        accessible: photosApiStatus === 200,
       },
     })
   } catch (err) {
     console.error('Debug endpoint error:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Debug failed: ${message}`)
+    return errorResponse('Debug check failed')
   }
 }

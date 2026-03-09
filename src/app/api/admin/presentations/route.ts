@@ -18,7 +18,7 @@ export async function GET() {
 
   if (error) {
     console.error('Failed to fetch presentations:', error)
-    return errorResponse(`Failed to fetch presentations: ${error.message}`)
+    return errorResponse('Failed to fetch presentations')
   }
 
   return successResponse(data)
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('Failed to create presentation:', error)
-    return errorResponse(`Failed to create presentation: ${error.message}`)
+    return errorResponse('Failed to create presentation')
   }
 
   return successResponse(data)

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     console.error('Failed to get session:', err)
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to get session: ${message}`)
+    return errorResponse('Failed to get session')
   }
 }
 
@@ -54,6 +54,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   } catch (err) {
     console.error('Failed to delete session:', err)
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to delete session: ${message}`)
+    return errorResponse('Failed to delete session')
   }
 }

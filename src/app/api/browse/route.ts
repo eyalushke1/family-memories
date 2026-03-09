@@ -30,8 +30,9 @@ export async function GET(request: NextRequest) {
   const err = checkSupabase()
   if (err) return err
 
-  // Get profile ID from cookie
-  const profileId = request.cookies.get('fm-profile-id')?.value
+  // Get verified profile ID
+  const { getProfileId } = await import('@/lib/api/admin-check')
+  const profileId = getProfileId(request)
 
   if (!profileId) {
     return errorResponse('Profile not selected', 401)
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
 
   if (catError) {
     console.error('Failed to fetch categories:', catError)
-    return errorResponse(`Failed to fetch categories: ${catError.message}`)
+    return errorResponse('Failed to fetch categories')
   }
 
   const categories = rawCategories as CategoryRow[] | null
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
 
   if (cpError) {
     console.error('Failed to fetch clip profiles:', cpError)
-    return errorResponse(`Failed to fetch clip profiles: ${cpError.message}`)
+    return errorResponse('Failed to fetch clip profiles')
   }
 
   const allowedClipIds = new Set((clipProfiles ?? []).map((cp) => cp.clip_id))
@@ -76,7 +77,7 @@ export async function GET(request: NextRequest) {
 
   if (clipError) {
     console.error('Failed to fetch clips:', clipError)
-    return errorResponse(`Failed to fetch clips: ${clipError.message}`)
+    return errorResponse('Failed to fetch clips')
   }
 
   const clips = rawClips as ClipRow[] | null

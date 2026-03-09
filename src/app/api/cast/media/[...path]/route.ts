@@ -23,17 +23,26 @@ function isVideoType(contentType: string): boolean {
   return contentType.startsWith('video/')
 }
 
-function addCorsHeaders(headers: Headers): Headers {
-  headers.set('Access-Control-Allow-Origin', '*')
+function getAllowedOrigin(requestOrigin: string | null): string {
+  const configuredOrigin = process.env.CAST_ALLOWED_ORIGIN
+  if (configuredOrigin) return configuredOrigin
+  // Default: allow the same origin or Chromecast receiver
+  if (requestOrigin) return requestOrigin
+  return '*'
+}
+
+function addCorsHeaders(headers: Headers, requestOrigin: string | null): Headers {
+  headers.set('Access-Control-Allow-Origin', getAllowedOrigin(requestOrigin))
   headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
   headers.set('Access-Control-Allow-Headers', 'Range, Content-Type')
   headers.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges')
+  headers.set('Vary', 'Origin')
   return headers
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
   const headers = new Headers()
-  addCorsHeaders(headers)
+  addCorsHeaders(headers, request.headers.get('origin'))
   return new NextResponse(null, { status: 204, headers })
 }
 
@@ -46,6 +55,11 @@ export async function GET(
 
   if (!storagePath) {
     return NextResponse.json({ success: false, error: 'Path required' }, { status: 400 })
+  }
+
+  // Reject path traversal attempts
+  if (pathSegments.some(seg => seg === '..' || seg === '.') || storagePath.includes('..')) {
+    return NextResponse.json({ success: false, error: 'Invalid path' }, { status: 400 })
   }
 
   try {
@@ -66,7 +80,7 @@ export async function GET(
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'public, max-age=604800',
         })
-        addCorsHeaders(headers)
+        addCorsHeaders(headers, request.headers.get('origin'))
         return new NextResponse(new Uint8Array(data), { status: 200, headers })
       }
 
@@ -81,7 +95,7 @@ export async function GET(
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'public, max-age=604800',
       })
-      addCorsHeaders(headers)
+      addCorsHeaders(headers, request.headers.get('origin'))
 
       return new NextResponse(new Uint8Array(data.subarray(start, end + 1)), {
         status: 206,
@@ -99,7 +113,7 @@ export async function GET(
       'Accept-Ranges': 'bytes',
       'Cache-Control': `public, max-age=${cacheMaxAge}`,
     })
-    addCorsHeaders(headers)
+    addCorsHeaders(headers, request.headers.get('origin'))
 
     return new NextResponse(new Uint8Array(data), { status: 200, headers })
   } catch (error) {

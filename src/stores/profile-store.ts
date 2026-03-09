@@ -12,12 +12,17 @@ interface ProfileState {
   restoreFromCookie: () => void
 }
 
-function setProfileCookie(profileId: string) {
-  document.cookie = `fm-profile-id=${profileId}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
+async function setProfileCookie(profileId: string) {
+  // Use server endpoint to set signed cookie
+  await fetch('/api/auth/set-profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profileId }),
+  })
 }
 
-function clearProfileCookie() {
-  document.cookie = 'fm-profile-id=; path=/; max-age=0'
+async function clearProfileCookie() {
+  await fetch('/api/auth/set-profile', { method: 'DELETE' })
 }
 
 function getProfileIdFromCookie(): string | null {

@@ -34,6 +34,11 @@ export async function GET(
     return NextResponse.json({ success: false, error: 'Path required' }, { status: 400 })
   }
 
+  // Reject path traversal attempts
+  if (pathSegments.some(seg => seg === '..' || seg === '.') || storagePath.includes('..')) {
+    return NextResponse.json({ success: false, error: 'Invalid path' }, { status: 400 })
+  }
+
   try {
     const storage = getStorage()
     const contentType = getContentType(storagePath)

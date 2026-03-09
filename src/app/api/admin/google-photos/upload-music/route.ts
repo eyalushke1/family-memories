@@ -130,7 +130,6 @@ export async function POST(request: NextRequest) {
     })
   } catch (err) {
     console.error('Failed to upload music:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to upload music: ${message}`)
+    return errorResponse('Failed to upload music')
   }
 }

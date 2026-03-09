@@ -24,7 +24,7 @@ export async function GET() {
 
   if (error) {
     console.error('Failed to fetch categories:', error)
-    return errorResponse(`Failed to fetch categories: ${error.message}`)
+    return errorResponse('Failed to fetch categories')
   }
 
   return successResponse(data)
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     console.error('Failed to create category:', error)
-    return errorResponse(`Failed to create category: ${error.message}`)
+    return errorResponse('Failed to create category')
   }
 
   return successResponse(data, 201)

@@ -25,7 +25,7 @@ export async function GET(
 
   if (error) {
     console.error('Failed to fetch presentation:', error)
-    return errorResponse(`Failed to fetch presentation: ${error.message}`)
+    return errorResponse('Failed to fetch presentation')
   }
 
   return successResponse(data)
@@ -66,7 +66,7 @@ export async function PUT(
 
   if (error) {
     console.error('Failed to update presentation:', error)
-    return errorResponse(`Failed to update presentation: ${error.message}`)
+    return errorResponse('Failed to update presentation')
   }
 
   return successResponse(data)
@@ -90,7 +90,7 @@ export async function DELETE(
 
   if (error) {
     console.error('Failed to delete presentation:', error)
-    return errorResponse(`Failed to delete presentation: ${error.message}`)
+    return errorResponse('Failed to delete presentation')
   }
 
   return successResponse({ deleted: true })

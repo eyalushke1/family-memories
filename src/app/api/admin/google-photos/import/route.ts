@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getValidAccessToken } from '@/lib/google/oauth'
 import { getStorage, MediaPaths } from '@/lib/storage'
 import { supabase } from '@/lib/supabase/client'
+import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -37,12 +38,10 @@ const DOWNLOAD_CONFIG = {
 }
 
 export async function POST(request: NextRequest) {
-  // Get profile ID from cookie
-  const profileId = request.cookies.get('fm-profile-id')?.value
+  const adminErr = await checkAdmin(request)
+  if (adminErr) return adminErr
 
-  if (!profileId) {
-    return errorResponse('Profile not selected', 401)
-  }
+  const profileId = getProfileId(request)!
 
   const body: ImportRequest = await request.json()
   const { mediaItems, createPresentation, presentationTitle, categoryId, slideDurationMs, transitionType, backgroundMusicPath, musicFadeOutMs, muteVideoAudio } = body
@@ -251,7 +250,6 @@ export async function POST(request: NextRequest) {
     }, success ? 200 : 207) // HTTP 207 for partial success
   } catch (err) {
     console.error('Failed to import media:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to import media: ${message}`)
+    return errorResponse('Failed to import media')
   }
 }

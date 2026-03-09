@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createPhotosClient } from '@/lib/google/photos-client'
+import { checkAdmin, getProfileId } from '@/lib/api/admin-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 
 /**
@@ -8,12 +9,10 @@ import { successResponse, errorResponse } from '@/lib/api/response'
  * Supports pagination via pageToken query param
  */
 export async function GET(request: NextRequest) {
-  // Get profile ID from cookie
-  const profileId = request.cookies.get('fm-profile-id')?.value
+  const adminErr = await checkAdmin(request)
+  if (adminErr) return adminErr
 
-  if (!profileId) {
-    return errorResponse('Profile not selected', 401)
-  }
+  const profileId = getProfileId(request)!
 
   const pageToken = request.nextUrl.searchParams.get('pageToken') || undefined
   const limit = parseInt(request.nextUrl.searchParams.get('limit') || '100', 10)
@@ -46,7 +45,6 @@ export async function GET(request: NextRequest) {
     })
   } catch (err) {
     console.error('Failed to fetch media items:', err)
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    return errorResponse(`Failed to fetch media: ${message}`)
+    return errorResponse('Failed to fetch media')
   }
 }

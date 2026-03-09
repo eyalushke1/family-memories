@@ -10,7 +10,11 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   private resolvePath(storagePath: string): string {
-    return path.join(LOCAL_STORAGE_DIR, storagePath)
+    const resolved = path.resolve(LOCAL_STORAGE_DIR, storagePath)
+    if (!resolved.startsWith(LOCAL_STORAGE_DIR + path.sep) && resolved !== LOCAL_STORAGE_DIR) {
+      throw new Error('Path traversal detected')
+    }
+    return resolved
   }
 
   async upload(storagePath: string, data: Buffer | Uint8Array, options?: UploadOptions): Promise<StorageFile> {

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { isValidUUID } from '@/lib/api/signed-cookie'
 
 // GET - Get slides for a presentation
 export async function GET(
@@ -21,7 +22,7 @@ export async function GET(
 
   if (error) {
     console.error('Failed to fetch slides:', error)
-    return errorResponse(`Failed to fetch slides: ${error.message}`)
+    return errorResponse('Failed to fetch slides')
   }
 
   return successResponse(data)
@@ -64,7 +65,7 @@ export async function POST(
 
   if (error) {
     console.error('Failed to add slide:', error)
-    return errorResponse(`Failed to add slide: ${error.message}`)
+    return errorResponse('Failed to add slide')
   }
 
   return successResponse(data)
@@ -84,6 +85,11 @@ export async function PUT(
 
   if (!Array.isArray(slide_ids)) {
     return errorResponse('slide_ids array is required', 400)
+  }
+
+  // Validate each ID is a valid UUID
+  if (!slide_ids.every((sid: unknown) => typeof sid === 'string' && isValidUUID(sid))) {
+    return errorResponse('All slide IDs must be valid UUIDs', 400)
   }
 
   // Update sort_order for each slide
@@ -139,7 +145,7 @@ export async function PATCH(
 
   if (error) {
     console.error('Failed to update slide:', error)
-    return errorResponse(`Failed to update slide: ${error.message}`)
+    return errorResponse('Failed to update slide')
   }
 
   return successResponse(data)
@@ -169,7 +175,7 @@ export async function DELETE(
 
   if (error) {
     console.error('Failed to delete slide:', error)
-    return errorResponse(`Failed to delete slide: ${error.message}`)
+    return errorResponse('Failed to delete slide')
   }
 
   return successResponse({ deleted: true })

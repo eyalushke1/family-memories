@@ -14,7 +14,7 @@ export async function GET() {
 
   if (error) {
     console.error('Failed to fetch categories:', error)
-    return errorResponse(`Failed to fetch categories: ${error.message}`)
+    return errorResponse('Failed to fetch categories')
   }
 
   return successResponse(data)

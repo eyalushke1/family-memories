@@ -4,8 +4,39 @@ import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { getStorage } from '@/lib/storage'
 import { MediaPaths } from '@/lib/storage/media-paths'
+import { rateLimit, getRateLimitKey } from '@/lib/api/rate-limit'
 
 type UploadType = 'avatar' | 'video' | 'thumbnail' | 'animated-thumbnail' | 'intro-video' | 'intro-thumbnail'
+
+// Magic byte signatures for file type validation
+const MAGIC_BYTES: { pattern: number[]; offset?: number; type: 'image' | 'video' }[] = [
+  // JPEG
+  { pattern: [0xFF, 0xD8, 0xFF], type: 'image' },
+  // PNG
+  { pattern: [0x89, 0x50, 0x4E, 0x47], type: 'image' },
+  // GIF87a / GIF89a
+  { pattern: [0x47, 0x49, 0x46, 0x38], type: 'image' },
+  // WebP (RIFF....WEBP)
+  { pattern: [0x52, 0x49, 0x46, 0x46], type: 'image' },
+  // MP4 (ftyp box)
+  { pattern: [0x66, 0x74, 0x79, 0x70], offset: 4, type: 'video' },
+  // WebM/MKV (EBML)
+  { pattern: [0x1A, 0x45, 0xDF, 0xA3], type: 'video' },
+  // MOV (ftyp qt)
+  { pattern: [0x00, 0x00, 0x00], type: 'video' },
+]
+
+function validateMagicBytes(buffer: Buffer, expectedType: 'image' | 'video'): boolean {
+  if (buffer.length < 12) return false
+
+  for (const sig of MAGIC_BYTES) {
+    if (sig.type !== expectedType) continue
+    const offset = sig.offset ?? 0
+    const matches = sig.pattern.every((byte, i) => buffer[offset + i] === byte)
+    if (matches) return true
+  }
+  return false
+}
 
 function getContentType(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase()
@@ -23,6 +54,10 @@ function getContentType(filename: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limit: 30 uploads per minute per IP
+  const rlErr = rateLimit(getRateLimitKey(request, 'upload'), { maxRequests: 30 })
+  if (rlErr) return rlErr
+
   const err = checkSupabase()
   if (err) return err
 
@@ -34,6 +69,10 @@ export async function POST(request: NextRequest) {
   if (!file) {
     return errorResponse('File is required', 400)
   }
+
+  // Enforce file size limits: 10MB for images, 500MB for videos
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024  // 10MB
+  const MAX_VIDEO_SIZE = 500 * 1024 * 1024  // 500MB
 
   if (!type) {
     return errorResponse('Type is required (avatar, video, thumbnail, animated-thumbnail)', 400)
@@ -57,6 +96,14 @@ export async function POST(request: NextRequest) {
     if (!allowedVideoTypes.includes(file.type)) {
       return errorResponse('Invalid video type. Allowed: mp4, webm, mov', 400)
     }
+  }
+
+  // Check file size limits
+  const isVideoUpload = type === 'video' || type === 'intro-video'
+  const maxSize = isVideoUpload ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE
+  if (file.size > maxSize) {
+    const maxMB = maxSize / (1024 * 1024)
+    return errorResponse(`File too large. Maximum size: ${maxMB}MB`, 400)
   }
 
   // Generate storage path
@@ -88,6 +135,12 @@ export async function POST(request: NextRequest) {
 
   // Read file data
   const buffer = Buffer.from(await file.arrayBuffer())
+
+  // Validate file content by checking magic bytes
+  if (!validateMagicBytes(buffer, isVideoUpload ? 'video' : 'image')) {
+    return errorResponse('File content does not match expected type', 400)
+  }
+
   const contentType = getContentType(filename)
 
   // Upload to storage
