@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
 import { listProjects, addProject } from '@/lib/keepalive/db'
+import { installKeepAliveRpc } from '@/lib/keepalive/install-rpc'
 
 export async function GET() {
   const err = checkSupabase()
@@ -34,8 +35,17 @@ export async function POST(request: NextRequest) {
       return errorResponse('Invalid Supabase URL. Must be https://<project>.supabase.co', 400)
     }
 
+    // Save the project first
     const project = await addProject(name, supabaseUrl, serviceKey)
-    return successResponse(project, 201)
+
+    // Auto-install the keepalive RPC function on the external project
+    const installResult = await installKeepAliveRpc(supabaseUrl)
+
+    return successResponse({
+      ...project,
+      rpc_installed: installResult.success,
+      rpc_install_error: installResult.error || null,
+    }, 201)
   } catch (e) {
     console.error('Failed to add keepalive project:', e)
     return errorResponse(e instanceof Error ? e.message : 'Failed to add project')

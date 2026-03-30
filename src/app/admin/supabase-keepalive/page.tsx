@@ -314,7 +314,11 @@ function AddProjectForm({
       })
       const data = await res.json()
       if (data.success) {
-        onAdded(data.data)
+        const { rpc_installed, rpc_install_error, ...project } = data.data
+        onAdded(project)
+        if (!rpc_installed) {
+          setError(`Project added but auto-setup failed: ${rpc_install_error || 'Unknown error'}. You can install the RPC function manually via SQL Editor.`)
+        }
       } else {
         setError(data.error || 'Failed to add project')
       }

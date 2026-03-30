@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Lock, Check, AlertCircle, Share2, MessageCircle } from 'lucide-react'
+import { Lock, Check, AlertCircle, Share2, MessageCircle, Key, Eye, EyeOff } from 'lucide-react'
 
 export default function SettingsPage() {
   const [currentPin, setCurrentPin] = useState('')
@@ -16,6 +16,15 @@ export default function SettingsPage() {
   const [shareLoading, setShareLoading] = useState(true)
   const [shareSaving, setShareSaving] = useState(false)
   const [shareSuccess, setShareSuccess] = useState(false)
+
+  // Supabase access token
+  const [tokenConfigured, setTokenConfigured] = useState(false)
+  const [tokenLoading, setTokenLoading] = useState(true)
+  const [tokenValue, setTokenValue] = useState('')
+  const [showToken, setShowToken] = useState(false)
+  const [tokenSaving, setTokenSaving] = useState(false)
+  const [tokenSuccess, setTokenSuccess] = useState(false)
+  const [tokenError, setTokenError] = useState<string | null>(null)
 
   // WhatsApp status
   const [waStatus, setWaStatus] = useState<'loading' | 'connected' | 'disconnected' | 'unavailable'>('loading')
@@ -36,6 +45,19 @@ export default function SettingsPage() {
       }
     }
     loadShareSettings()
+
+    async function loadTokenStatus() {
+      try {
+        const res = await fetch('/api/admin/settings/supabase-token')
+        const json = await res.json()
+        if (json.success) setTokenConfigured(json.data.configured)
+      } catch {
+        // ignore
+      } finally {
+        setTokenLoading(false)
+      }
+    }
+    loadTokenStatus()
 
     async function loadWhatsAppStatus() {
       try {
@@ -67,6 +89,50 @@ export default function SettingsPage() {
       // Silently fail
     } finally {
       setShareSaving(false)
+    }
+  }
+
+  const handleTokenSave = async () => {
+    if (!tokenValue.trim()) {
+      setTokenError('Token is required')
+      return
+    }
+    setTokenSaving(true)
+    setTokenSuccess(false)
+    setTokenError(null)
+    try {
+      const res = await fetch('/api/admin/settings/supabase-token', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: tokenValue.trim() }),
+      })
+      const json = await res.json()
+      if (json.success) {
+        setTokenSuccess(true)
+        setTokenConfigured(true)
+        setTokenValue('')
+        setShowToken(false)
+      } else {
+        setTokenError(json.error || 'Failed to save token')
+      }
+    } catch {
+      setTokenError('Failed to save token')
+    } finally {
+      setTokenSaving(false)
+    }
+  }
+
+  const handleTokenRemove = async () => {
+    if (!confirm('Remove the Supabase access token? New projects will need manual RPC setup.')) return
+    try {
+      const res = await fetch('/api/admin/settings/supabase-token', { method: 'DELETE' })
+      const json = await res.json()
+      if (json.success) {
+        setTokenConfigured(false)
+        setTokenValue('')
+      }
+    } catch {
+      setTokenError('Failed to remove token')
     }
   }
 
@@ -268,6 +334,89 @@ export default function SettingsPage() {
         <p className="text-xs text-text-muted mt-4">
           New share links will use this expiry. Existing links keep their original expiry.
         </p>
+      </div>
+
+      {/* Supabase Access Token */}
+      <div className="bg-bg-card border border-border rounded-xl p-6 mt-6">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
+            <Key className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Supabase Access Token</h2>
+            <p className="text-sm text-text-muted">
+              Enables auto-setup of keep-alive on new projects
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className={`w-3 h-3 rounded-full ${
+              tokenLoading ? 'bg-text-muted animate-pulse' :
+              tokenConfigured ? 'bg-green-500' : 'bg-yellow-500'
+            }`} />
+            <span className="text-sm font-medium">
+              {tokenLoading ? 'Checking...' :
+               tokenConfigured ? 'Token configured' : 'Not configured'}
+            </span>
+            {tokenConfigured && (
+              <button
+                onClick={handleTokenRemove}
+                className="text-xs text-red-400 hover:text-red-300 ml-auto"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-1">
+              {tokenConfigured ? 'Replace Token' : 'Access Token'}
+            </label>
+            <div className="relative">
+              <input
+                type={showToken ? 'text' : 'password'}
+                value={tokenValue}
+                onChange={(e) => setTokenValue(e.target.value)}
+                placeholder="sbp_..."
+                className="w-full px-4 py-2 pr-10 bg-bg-secondary border border-border rounded-lg focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 font-mono text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowToken(!showToken)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+              >
+                {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            <p className="text-xs text-text-muted mt-1">
+              Generate at supabase.com &gt; Account &gt; Access Tokens. One token works for all your projects.
+            </p>
+          </div>
+
+          {tokenError && (
+            <div className="flex items-center gap-2 text-red-400 text-sm">
+              <AlertCircle size={16} />
+              {tokenError}
+            </div>
+          )}
+
+          {tokenSuccess && (
+            <div className="flex items-center gap-2 text-green-400 text-sm">
+              <Check size={16} />
+              Token saved successfully
+            </div>
+          )}
+
+          <button
+            onClick={handleTokenSave}
+            disabled={tokenSaving || !tokenValue.trim()}
+            className="w-full px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors disabled:opacity-50"
+          >
+            {tokenSaving ? 'Saving...' : 'Save Token'}
+          </button>
+        </div>
       </div>
 
       {/* WhatsApp Integration */}
