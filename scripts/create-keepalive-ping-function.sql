@@ -7,6 +7,7 @@ CREATE OR REPLACE FUNCTION family_memories.perform_keepalive_ping()
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = family_memories
 AS $$
 DECLARE
   rows_updated int;
