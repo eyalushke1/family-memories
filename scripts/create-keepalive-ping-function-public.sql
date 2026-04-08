@@ -6,7 +6,7 @@
 CREATE OR REPLACE FUNCTION public.perform_keepalive_ping()
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public
 AS $$
 BEGIN
@@ -25,8 +25,6 @@ BEGIN
   CREATE POLICY "Allow all access" ON public._keepalive_temp
     FOR ALL USING (true) WITH CHECK (true);
   GRANT ALL ON public._keepalive_temp TO service_role;
-  GRANT ALL ON public._keepalive_temp TO anon;
-  GRANT ALL ON public._keepalive_temp TO authenticated;
 
   -- Step 3: Insert a row
   INSERT INTO public._keepalive_temp (ping_value)
@@ -38,3 +36,9 @@ BEGIN
   );
 END;
 $$;
+
+-- Only service_role can call this function
+REVOKE ALL ON FUNCTION public.perform_keepalive_ping() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.perform_keepalive_ping() FROM anon;
+REVOKE ALL ON FUNCTION public.perform_keepalive_ping() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.perform_keepalive_ping() TO service_role;

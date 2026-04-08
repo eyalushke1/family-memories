@@ -6,7 +6,7 @@
 CREATE OR REPLACE FUNCTION family_memories.perform_keepalive_ping()
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = family_memories
 AS $$
 DECLARE
@@ -29,10 +29,8 @@ BEGIN
   CREATE POLICY "Allow all access" ON family_memories._keepalive_temp
     FOR ALL USING (true) WITH CHECK (true);
 
-  -- Step 5: Grant permissions
+  -- Step 5: Grant permissions (service_role only)
   GRANT ALL ON family_memories._keepalive_temp TO service_role;
-  GRANT ALL ON family_memories._keepalive_temp TO anon;
-  GRANT ALL ON family_memories._keepalive_temp TO authenticated;
 
   -- Step 6: Insert a random row (write activity)
   INSERT INTO family_memories._keepalive_temp (ping_value)
@@ -58,11 +56,13 @@ BEGIN
   RETURN jsonb_build_object(
     'status', 'success',
     'pinged_at', now()::text,
-    'projects_updated', rows_updated,
-    'operations', jsonb_build_array(
-      'drop_table', 'create_table', 'enable_rls', 'create_policy',
-      'grant_permissions', 'insert', 'delete', 'drop_table', 'update_projects'
-    )
+    'projects_updated', rows_updated
   );
 END;
 $$;
+
+-- Only service_role can call this function
+REVOKE ALL ON FUNCTION family_memories.perform_keepalive_ping() FROM PUBLIC;
+REVOKE ALL ON FUNCTION family_memories.perform_keepalive_ping() FROM anon;
+REVOKE ALL ON FUNCTION family_memories.perform_keepalive_ping() FROM authenticated;
+GRANT EXECUTE ON FUNCTION family_memories.perform_keepalive_ping() TO service_role;
