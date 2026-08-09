@@ -97,6 +97,9 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
   const previousSlide = previousIndex !== null ? normalizedSlides[previousIndex] : null
   const totalSlides = normalizedSlides.length
   const isCurrentVideo = currentSlide?.mediaType === 'video'
+  // A muted video slide has no audio of its own, so the background music should
+  // carry on over it rather than dropping to silence.
+  const musicShouldPauseForVideo = isCurrentVideo && !muteVideoAudio
 
   // Remote playback for casting videos
   const { state: castState, isAvailable: castAvailable, isSupported: castSupported, promptCast } = useRemotePlayback(videoRef)
@@ -363,8 +366,11 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
     audio.muted = isMuted
 
-    // Don't resume music during video slides (hardware decoder conflict on Smart TVs)
-    if (isCurrentVideo) {
+    // Only step aside for a video slide when that video's own audio will
+    // actually be heard, so the two don't talk over each other (and to avoid the
+    // hardware decoder conflict on Smart TVs). When the video is muted there is
+    // nothing to collide with, so the background music keeps playing over it.
+    if (musicShouldPauseForVideo) {
       if (!audio.paused) {
         audio.pause()
         musicPausedForVideoRef.current = true
@@ -372,16 +378,16 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       return
     }
 
-    // Resume music after video slide ends
-    if (isPlaying && !isCurrentVideo) {
+    // Resume music after an unmuted video slide ends
+    if (isPlaying) {
       if (musicPausedForVideoRef.current || audio.paused) {
         musicPausedForVideoRef.current = false
         audio.play().catch(() => {})
       }
-    } else if (!isPlaying) {
+    } else {
       audio.pause()
     }
-  }, [isPlaying, isMuted, isCurrentVideo, hasMusic])
+  }, [isPlaying, isMuted, musicShouldPauseForVideo, hasMusic])
 
   // Retry music playback on first user interaction (for autoplay-blocked browsers & Smart TVs)
   useEffect(() => {
@@ -389,7 +395,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
 
     const retryPlay = () => {
       const audio = audioRef.current
-      if (audio && audio.paused && isPlaying && !isCurrentVideo) {
+      if (audio && audio.paused && isPlaying && !musicShouldPauseForVideo) {
         audio.play().catch(() => {})
       }
     }
@@ -402,7 +408,7 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       document.removeEventListener('click', retryPlay)
       document.removeEventListener('keydown', retryPlay)
     }
-  }, [hasMusic, isPlaying, isCurrentVideo])
+  }, [hasMusic, isPlaying, musicShouldPauseForVideo])
 
   // Pause/resume on app visibility change (Smart TV app switching)
   useEffect(() => {
@@ -411,14 +417,14 @@ export function SlideshowPlayer({ presentationData }: SlideshowPlayerProps) {
       if (!audio) return
       if (document.hidden) {
         audio.pause()
-      } else if (isPlaying && !isCurrentVideo) {
+      } else if (isPlaying && !musicShouldPauseForVideo) {
         audio.play().catch(() => {})
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibility)
     return () => document.removeEventListener('visibilitychange', handleVisibility)
-  }, [isPlaying, isCurrentVideo])
+  }, [isPlaying, musicShouldPauseForVideo])
 
   // Auto-hide controls
   const showControlsTemporarily = useCallback(() => {
