@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { SHARE_EXPIRY_DAY_OPTIONS, parseExpiryDays } from '@/lib/shares/expiry'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -44,9 +45,16 @@ export async function POST(request: NextRequest) {
 
   // Determine expiry
   let expiresAt: string | null = null
-  if (typeof expiryDays === 'number' && expiryDays > 0) {
+  if (expiryDays !== undefined && expiryDays !== null) {
+    const days = parseExpiryDays(expiryDays)
+    if (days === null) {
+      return errorResponse(
+        `expiryDays must be one of: ${SHARE_EXPIRY_DAY_OPTIONS.join(', ')}`,
+        400
+      )
+    }
     const d = new Date()
-    d.setDate(d.getDate() + expiryDays)
+    d.setDate(d.getDate() + days)
     expiresAt = d.toISOString()
   } else {
     // Read default from settings

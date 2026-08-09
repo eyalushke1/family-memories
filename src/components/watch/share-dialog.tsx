@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Copy, Check, Loader2, Mail, MessageCircle, Send, ExternalLink } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { SHARE_EXPIRY_DAY_OPTIONS, DEFAULT_SHARE_EXPIRY_DAYS } from '@/lib/shares/expiry'
 
 interface ShareDialogProps {
   clipId: string
@@ -16,7 +17,10 @@ type WhatsAppState = 'idle' | 'input' | 'sending' | 'sent' | 'opened' | 'error'
 export function ShareDialog({ clipId, clipTitle, open, onClose }: ShareDialogProps) {
   const [loading, setLoading] = useState(false)
   const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [shareToken, setShareToken] = useState<string | null>(null)
   const [expiresAt, setExpiresAt] = useState<string | null>(null)
+  const [expiryDays, setExpiryDays] = useState(DEFAULT_SHARE_EXPIRY_DAYS)
+  const [updatingExpiry, setUpdatingExpiry] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,7 +35,10 @@ export function ShareDialog({ clipId, clipTitle, open, onClose }: ShareDialogPro
   useEffect(() => {
     if (!open) {
       setShareUrl(null)
+      setShareToken(null)
       setExpiresAt(null)
+      setExpiryDays(DEFAULT_SHARE_EXPIRY_DAYS)
+      setUpdatingExpiry(false)
       setCopied(false)
       setError(null)
       setWaState('idle')
@@ -51,12 +58,13 @@ export function ShareDialog({ clipId, clipTitle, open, onClose }: ShareDialogPro
         const res = await fetch('/api/shares', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clipId, profileId }),
+          body: JSON.stringify({ clipId, profileId, expiryDays: DEFAULT_SHARE_EXPIRY_DAYS }),
         })
         const json = await res.json()
 
         if (json.success) {
           setShareUrl(json.data.shareUrl)
+          setShareToken(json.data.shareToken)
           setExpiresAt(json.data.expiresAt)
         } else {
           setError(json.error || 'Failed to create share link')
@@ -104,6 +112,38 @@ export function ShareDialog({ clipId, clipTitle, open, onClose }: ShareDialogPro
       document.body.removeChild(input)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  // Change how long the link stays valid. Updates the existing share row, so the
+  // URL never changes — a link already copied or sent stays valid.
+  const handleExpiryChange = async (days: number) => {
+    if (!shareToken || days === expiryDays || updatingExpiry) return
+
+    const previousDays = expiryDays
+    setExpiryDays(days)
+    setUpdatingExpiry(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/shares/${shareToken}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiryDays: days }),
+      })
+      const json = await res.json()
+
+      if (json.success) {
+        setExpiresAt(json.data.expiresAt)
+      } else {
+        setExpiryDays(previousDays)
+        setError(json.error || 'Failed to update link expiry')
+      }
+    } catch {
+      setExpiryDays(previousDays)
+      setError('Failed to update link expiry')
+    } finally {
+      setUpdatingExpiry(false)
     }
   }
 
@@ -246,9 +286,33 @@ export function ShareDialog({ clipId, clipTitle, open, onClose }: ShareDialogPro
                   </button>
                 </div>
 
+                {/* Link duration picker */}
+                <div className="mb-4">
+                  <p className="text-text-secondary text-xs mb-2">Link active for</p>
+                  <div className="flex gap-2">
+                    {SHARE_EXPIRY_DAY_OPTIONS.map((days) => (
+                      <button
+                        key={days}
+                        onClick={() => handleExpiryChange(days)}
+                        disabled={updatingExpiry}
+                        className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                          expiryDays === days
+                            ? 'bg-accent border-accent text-white'
+                            : 'bg-bg-primary border-border text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        {days === 1 ? '1 day' : `${days} days`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Expiry info */}
                 {expiresAt && (
-                  <p className="text-text-muted text-xs mb-4">{formatExpiry(expiresAt)}</p>
+                  <p className="text-text-muted text-xs mb-4 flex items-center gap-1.5">
+                    {updatingExpiry && <Loader2 size={12} className="animate-spin" />}
+                    {formatExpiry(expiresAt)}
+                  </p>
                 )}
 
                 {/* Action buttons (idle state) */}

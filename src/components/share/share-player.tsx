@@ -51,8 +51,17 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [needsUserPlay, setNeedsUserPlay] = useState(false)
 
+  // Video sources live in state and are rendered as the `src` attribute.
+  // They must NOT be assigned onto the refs from the loader — while playState is
+  // 'loading' the <video> elements are not mounted yet, so the refs are still null
+  // and the assignment is silently dropped, leaving a source-less player.
+  const [mainVideoUrl, setMainVideoUrl] = useState<string | null>(null)
+  const [introVideoUrl, setIntroVideoUrl] = useState<string | null>(null)
+  const [introFailed, setIntroFailed] = useState(false)
+
   const mainVideoRef = useRef<HTMLVideoElement>(null)
   const introVideoRef = useRef<HTMLVideoElement>(null)
+  const usedSignedMainUrlRef = useRef(false)
 
   const fetchSignedUrl = useCallback(async (storagePath: string): Promise<string | null> => {
     try {
@@ -97,21 +106,17 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
           }
           setPlayState('ready')
         } else {
-          // Load video URL
+          // Resolve the main video URL — prefer a signed URL for direct storage
+          // access, fall back to the media proxy.
           const signedUrl = await fetchSignedUrl(clipData.videoPath)
-          const videoUrl = signedUrl || `/api/media/files/${clipData.videoPath}`
+          usedSignedMainUrlRef.current = !!signedUrl
+          setMainVideoUrl(signedUrl || `/api/media/files/${clipData.videoPath}`)
 
-          // Load intro if exists
+          // Resolve the intro URL if there is one
           if (json.data.introClip) {
             const introData = json.data.introClip as IntroData
             const introUrl = await fetchSignedUrl(introData.videoPath)
-            if (introVideoRef.current) {
-              introVideoRef.current.src = introUrl || `/api/media/files/${introData.videoPath}`
-            }
-          }
-
-          if (mainVideoRef.current) {
-            mainVideoRef.current.src = videoUrl
+            setIntroVideoUrl(introUrl || `/api/media/files/${introData.videoPath}`)
           }
 
           setPlayState('ready')
@@ -126,62 +131,119 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
     loadShare()
   }, [shareToken, fetchSignedUrl])
 
-  // Auto-play when ready
+  // Whether the intro should be played before the main video
+  const playIntroFirst = !!introClip && !!introVideoUrl && !introFailed
+
+  const handleIntroEnded = useCallback(async () => {
+    if (clip?.videoPath === 'presentation') {
+      setPlayState('presentation')
+      return
+    }
+
+    const video = mainVideoRef.current
+    if (!video) return
+
+    setPlayState('main')
+    try {
+      await video.play()
+    } catch {
+      // Autoplay blocked after the intro — offer the tap-to-play overlay rather
+      // than dead-ending the viewer on an error screen.
+      setNeedsUserPlay(true)
+    }
+  }, [clip])
+
+  // Auto-play when ready — only once the source is actually attached to the element
   useEffect(() => {
     if (playState !== 'ready') return
-
-    async function startPlayback() {
-      if (clip?.videoPath === 'presentation') {
-        setPlayState('presentation')
-        return
-      }
-
-      const videoToPlay = introClip ? introVideoRef.current : mainVideoRef.current
-      if (!videoToPlay) return
-
-      try {
-        await videoToPlay.play()
-        setPlayState(introClip ? 'intro' : 'main')
-      } catch {
-        setNeedsUserPlay(true)
-      }
-    }
-
-    startPlayback()
-  }, [playState, clip, introClip])
-
-  const handleUserPlay = async () => {
-    setNeedsUserPlay(false)
-    const videoToPlay = introClip ? introVideoRef.current : mainVideoRef.current
-    if (!videoToPlay) return
-
-    try {
-      await videoToPlay.play()
-      setPlayState(introClip ? 'intro' : 'main')
-    } catch {
-      setPlayState('error')
-      setErrorMessage('Unable to play video')
-    }
-  }
-
-  const handleIntroEnded = async () => {
-    if (introVideoRef.current) {
-      introVideoRef.current.style.display = 'none'
-    }
 
     if (clip?.videoPath === 'presentation') {
       setPlayState('presentation')
       return
     }
 
-    if (mainVideoRef.current) {
+    if (!mainVideoUrl) return
+    // Wait for the intro URL to resolve before deciding which element to start
+    if (introClip && !introVideoUrl && !introFailed) return
+
+    async function startPlayback() {
+      const videoToPlay = playIntroFirst ? introVideoRef.current : mainVideoRef.current
+      if (!videoToPlay) return
+
       try {
-        await mainVideoRef.current.play()
-        setPlayState('main')
+        await videoToPlay.play()
+        setPlayState(playIntroFirst ? 'intro' : 'main')
       } catch {
-        setPlayState('error')
+        setNeedsUserPlay(true)
       }
     }
+
+    startPlayback()
+  }, [playState, clip, introClip, mainVideoUrl, introVideoUrl, introFailed, playIntroFirst])
+
+  // Intro failsafe — a share recipient must never be stranded on a black screen
+  // because the intro never loaded. Skip to the main video if it hasn't started.
+  useEffect(() => {
+    if (playState !== 'intro') return
+
+    const timer = setTimeout(() => {
+      const video = introVideoRef.current
+      if (video && (video.paused || video.readyState < 2)) {
+        setIntroFailed(true)
+      }
+    }, 5000)
+
+    return () => clearTimeout(timer)
+  }, [playState])
+
+  // Move on to the main video as soon as the intro is marked failed
+  useEffect(() => {
+    if (!introFailed) return
+    if (playState !== 'intro') return
+    handleIntroEnded()
+  }, [introFailed, playState, handleIntroEnded])
+
+  const handleUserPlay = async () => {
+    setNeedsUserPlay(false)
+    const videoToPlay = playIntroFirst ? introVideoRef.current : mainVideoRef.current
+    if (!videoToPlay) return
+
+    try {
+      await videoToPlay.play()
+      setPlayState(playIntroFirst ? 'intro' : 'main')
+    } catch {
+      setPlayState('error')
+      setErrorMessage('Unable to play video')
+    }
+  }
+
+  // If the signed storage URL fails to decode, retry through the media proxy,
+  // which serves correct Content-Type headers. Same recovery as the watch page.
+  const handleMainError = () => {
+    const video = mainVideoRef.current
+    if (!video?.error || !clip) return
+
+    if (usedSignedMainUrlRef.current && video.error.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+      console.log('[Share] Signed URL failed, falling back to media proxy')
+      usedSignedMainUrlRef.current = false
+      setMainVideoUrl(`/api/media/files/${clip.videoPath}`)
+      return
+    }
+
+    console.error('[Share] Video error:', video.error.code, video.error.message)
+
+    // Only hard-fail if the video never started. Once it is playing, a transient
+    // network error should leave the native controls in place to recover from
+    // rather than replacing the player with an error screen.
+    if (video.currentTime === 0) {
+      setPlayState('error')
+      setErrorMessage('Unable to play this video')
+    }
+  }
+
+  const handleIntroError = () => {
+    console.warn('[Share] Intro failed to load, skipping to main video')
+    setIntroFailed(true)
   }
 
   const handleMainEnded = () => {
@@ -258,26 +320,39 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
       </div>
 
       {/* Intro video (hidden when not playing) */}
-      {introClip && (
+      {introVideoUrl && !introFailed && (
         <video
           ref={introVideoRef}
+          src={introVideoUrl}
           className="absolute inset-0 w-full h-full object-contain"
           playsInline
+          preload="auto"
           onEnded={handleIntroEnded}
+          onError={handleIntroError}
           style={{ display: playState === 'intro' ? 'block' : 'none' }}
         />
       )}
 
       {/* Main video */}
-      <video
-        ref={mainVideoRef}
-        className="w-full h-full max-h-screen object-contain"
-        playsInline
-        controls
-        controlsList="nodownload"
-        onEnded={handleMainEnded}
-        style={{ display: playState === 'main' || playState === 'ready' ? 'block' : 'none' }}
-      />
+      {mainVideoUrl && (
+        <video
+          ref={mainVideoRef}
+          src={mainVideoUrl}
+          className="w-full h-full max-h-screen object-contain"
+          playsInline
+          controls
+          controlsList="nodownload"
+          preload={playIntroFirst ? 'metadata' : 'auto'}
+          onEnded={handleMainEnded}
+          onError={handleMainError}
+          style={{
+            display:
+              playState === 'main' || (playState === 'ready' && !playIntroFirst)
+                ? 'block'
+                : 'none',
+          }}
+        />
+      )}
 
       {/* Tap to play overlay */}
       {needsUserPlay && (

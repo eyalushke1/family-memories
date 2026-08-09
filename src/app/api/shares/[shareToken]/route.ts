@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/lib/supabase/client'
 import { checkSupabase } from '@/lib/api/supabase-check'
 import { successResponse, errorResponse } from '@/lib/api/response'
+import { SHARE_EXPIRY_DAY_OPTIONS, parseExpiryDays } from '@/lib/shares/expiry'
 
 /** GET — Validate share token and return clip data for playback */
 export async function GET(
@@ -32,28 +33,11 @@ export async function GET(
     return errorResponse('This share link has been revoked', 410)
   }
 
-  // Check expiry
-  if (share.expires_at) {
-    if (new Date(share.expires_at) < new Date()) {
-      return errorResponse('This share link has expired', 410)
-    }
-  } else {
-    // No explicit expiry — check against global default
-    const { data: setting } = await supabase
-      .from('settings')
-      .select('value')
-      .eq('key', 'share_default_expiry_days')
-      .single()
-
-    const defaultDays = setting ? parseInt(setting.value, 10) : 30
-    if (defaultDays > 0) {
-      const expiresAt = new Date(share.created_at)
-      expiresAt.setDate(expiresAt.getDate() + defaultDays)
-      if (expiresAt < new Date()) {
-        return errorResponse('This share link has expired', 410)
-      }
-    }
-    // If defaultDays is 0 or NaN, link never expires
+  // Check expiry. The expiry is baked into expires_at when the link is created
+  // (or changed), so a NULL means "never expires" — the global default must not
+  // be re-applied here, or changing it would retroactively kill existing links.
+  if (share.expires_at && new Date(share.expires_at) < new Date()) {
+    return errorResponse('This share link has expired', 410)
   }
 
   // Fetch the clip
@@ -124,6 +108,60 @@ export async function GET(
       durationSeconds: introClip.duration_seconds,
     } : null,
     presentation,
+  })
+}
+
+/** PATCH — Change how long an existing share link stays valid (keeps the same token) */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ shareToken: string }> }
+) {
+  const err = checkSupabase()
+  if (err) return err
+
+  const { shareToken } = await params
+
+  if (!shareToken || shareToken.length < 10) {
+    return errorResponse('Invalid share token', 400)
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await request.json()
+  } catch {
+    return errorResponse('Invalid JSON', 400)
+  }
+
+  const expiryDays = parseExpiryDays(body.expiryDays)
+
+  if (expiryDays === null) {
+    return errorResponse(
+      `expiryDays must be one of: ${SHARE_EXPIRY_DAY_OPTIONS.join(', ')}`,
+      400
+    )
+  }
+
+  const expiresAt = new Date()
+  expiresAt.setDate(expiresAt.getDate() + expiryDays)
+
+  const { data, error } = await supabase
+    .from('shared_clips')
+    .update({ expires_at: expiresAt.toISOString() })
+    .eq('share_token', shareToken)
+    .select('id, share_token, expires_at')
+
+  if (error) {
+    console.error('[Shares] Failed to update expiry:', error)
+    return errorResponse(`Failed to update expiry: ${error.message}`)
+  }
+
+  if (!data || data.length === 0) {
+    return errorResponse('Share link not found', 404)
+  }
+
+  return successResponse({
+    shareToken: data[0].share_token,
+    expiresAt: data[0].expires_at,
   })
 }
 
