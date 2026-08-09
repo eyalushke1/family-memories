@@ -16,6 +16,7 @@ import {
   Minimize,
 } from 'lucide-react'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
+import { waitForBufferedAhead, bufferedAhead } from '@/lib/media/buffer'
 import { useTVNavigation } from '@/components/tv/tv-navigation-context'
 import { trackViewStart, trackViewProgress, trackViewEnd } from '@/lib/analytics/track-view'
 import { detectDevice } from '@/lib/analytics/detect-device'
@@ -372,6 +373,10 @@ export default function TVWatchPage() {
       const startMain = async () => {
         const elapsed = Date.now() - transitionStart
         console.log(`[TV] Starting main video (transition took ${elapsed}ms)`)
+        // Build a buffer first — starting at HAVE_CURRENT_DATA means playing
+        // with nothing queued, which stalls immediately.
+        await waitForBufferedAhead(mainVideo)
+        console.log(`[TV] Buffer ahead of playhead: ${bufferedAhead(mainVideo).toFixed(1)}s`)
         try {
           mainVideo.muted = true
           await mainVideo.play()
@@ -434,6 +439,8 @@ export default function TVWatchPage() {
     video.preload = 'auto'
 
     const attemptPlay = async () => {
+      await waitForBufferedAhead(video)
+      console.log(`[TV] Buffer ahead of playhead: ${bufferedAhead(video).toFixed(1)}s`)
       try {
         video.muted = true
         await video.play()

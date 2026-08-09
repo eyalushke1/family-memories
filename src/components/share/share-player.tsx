@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertCircle, Play } from 'lucide-react'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
+import { waitForBufferedAhead } from '@/lib/media/buffer'
 
 interface ClipData {
   id: string
@@ -145,6 +146,7 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
 
     setPlayState('main')
     try {
+      await waitForBufferedAhead(video)
       await video.play()
     } catch {
       // Autoplay blocked after the intro — offer the tap-to-play overlay rather
@@ -171,6 +173,7 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
       if (!videoToPlay) return
 
       try {
+        await waitForBufferedAhead(videoToPlay)
         await videoToPlay.play()
         setPlayState(playIntroFirst ? 'intro' : 'main')
       } catch {

@@ -7,9 +7,10 @@ import { isMediaRequestAllowed } from '@/lib/media/access'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-// Chunk size when browser sends open-ended range (e.g. bytes=0-)
-// 2MB chunks for faster initial load and smoother streaming
-const RANGE_CHUNK_SIZE = 2 * 1024 * 1024
+// Chunk size when browser sends open-ended range (e.g. bytes=0-).
+// 4MB gives the player more runway per request, which matters on slower links
+// where 2MB was being consumed faster than the next range could be fetched.
+const RANGE_CHUNK_SIZE = 4 * 1024 * 1024
 
 /**
  * Parse Range header into start/end bytes.

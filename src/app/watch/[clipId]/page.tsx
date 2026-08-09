@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { SlideshowPlayer } from '@/components/watch/slideshow-player'
 import { CastButton } from '@/components/cast/cast-button'
 import { needsTranscoding, canTranscode } from '@/lib/media/formats'
+import { waitForBufferedAhead, bufferedAhead } from '@/lib/media/buffer'
 import { trackViewStart, trackViewProgress, trackViewEnd } from '@/lib/analytics/track-view'
 import { detectDevice } from '@/lib/analytics/detect-device'
 import type { ApiResponse } from '@/types/api'
@@ -489,6 +490,12 @@ export default function WatchPage() {
           setIsBuffering(true)
         }
 
+        // readyState >= 2 only guarantees the current frame, so starting here
+        // meant playing with an empty buffer and stalling straight away. Give
+        // the buffer a head start first.
+        const buffered = await waitForBufferedAhead(mainVideo)
+        console.log(`[Player] Buffer ahead of playhead: ${bufferedAhead(mainVideo).toFixed(1)}s (target met: ${buffered})`)
+
         const success = await attemptPlay(mainVideo)
         console.log('[Player] Main play result:', success)
 
@@ -561,6 +568,10 @@ export default function WatchPage() {
     const startPlayback = async () => {
       const elapsed = Date.now() - loadStart
       console.log(`[Player] Starting playback (${elapsed}ms), readyState:`, video.readyState)
+
+      // Build a buffer before starting so playback doesn't stall on frame one
+      await waitForBufferedAhead(video)
+      console.log(`[Player] Buffer ahead of playhead: ${bufferedAhead(video).toFixed(1)}s`)
 
       // Try unmuted first (may work if user clicked to get here)
       const success = await attemptPlay(video, true)
