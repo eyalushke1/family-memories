@@ -22,11 +22,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   const { data: share } = await sb
     .from('shared_clips')
-    .select('clip_id, is_active')
+    .select('clip_id, is_active, expires_at')
     .eq('share_token', shareToken)
     .single()
 
-  if (!share || !share.is_active) {
+  // Mirror the checks in GET /api/shares/[shareToken]. Without the expiry check
+  // an expired link still exposes the clip title, description and thumbnail
+  // through the page title and OG tags — including in WhatsApp/email previews.
+  const isExpired = !!share?.expires_at && new Date(share.expires_at) < new Date()
+
+  if (!share || !share.is_active || isExpired) {
     return { title: 'Link Expired' }
   }
 
