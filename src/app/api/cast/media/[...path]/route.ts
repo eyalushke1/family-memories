@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
 import { getContentType, isStreamingType } from '@/lib/media/formats'
+import { isMediaRequestAllowed } from '@/lib/media/access'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
@@ -53,7 +54,7 @@ export async function OPTIONS() {
 }
 
 export async function HEAD(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path: pathSegments } = await params
@@ -61,6 +62,10 @@ export async function HEAD(
 
   if (!storagePath) {
     return new NextResponse(null, { status: 400 })
+  }
+
+  if (!(await isMediaRequestAllowed(request, storagePath))) {
+    return new NextResponse(null, { status: 403 })
   }
 
   try {
@@ -72,7 +77,7 @@ export async function HEAD(
       'Content-Type': contentType,
       'Content-Length': String(metadata.size),
       'Accept-Ranges': 'bytes',
-      'Cache-Control': 'public, max-age=604800',
+      'Cache-Control': 'private, max-age=604800',
     })
     addCorsHeaders(headers)
 
@@ -91,6 +96,10 @@ export async function GET(
 
   if (!storagePath) {
     return NextResponse.json({ success: false, error: 'Path required' }, { status: 400 })
+  }
+
+  if (!(await isMediaRequestAllowed(request, storagePath))) {
+    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
   }
 
   try {
@@ -117,7 +126,7 @@ export async function GET(
             'Content-Length': String(chunkSize),
             'Content-Range': `bytes ${start}-${end}/${totalSize}`,
             'Accept-Ranges': 'bytes',
-            'Cache-Control': 'public, max-age=604800',
+            'Cache-Control': 'private, max-age=604800',
           })
           addCorsHeaders(headers)
 
@@ -132,7 +141,7 @@ export async function GET(
         'Content-Type': contentType,
         'Content-Length': String(totalSize),
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=604800',
+        'Cache-Control': 'private, max-age=604800',
       })
       addCorsHeaders(headers)
 

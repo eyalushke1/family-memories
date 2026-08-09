@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { createClient } from '@supabase/supabase-js'
 import { SharePlayer } from '@/components/share/share-player'
+import { signMediaToken } from '@/lib/media/access'
 
 interface PageProps {
   params: Promise<{ shareToken: string }>
@@ -47,6 +48,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   const appName = process.env.NEXT_PUBLIC_APP_NAME || 'Family Memories'
 
+  // Link-preview crawlers (WhatsApp, Facebook, iMessage) send no cookies, so the
+  // OG image needs a path-bound token to get through the media gateway.
+  const thumbToken = clip.thumbnail_path ? await signMediaToken(clip.thumbnail_path) : null
+  const thumbUrl = clip.thumbnail_path && thumbToken
+    ? `/api/media/files/${clip.thumbnail_path}?t=${thumbToken}`
+    : null
+
   return {
     title: `${clip.title} — ${appName}`,
     description: clip.description || `Shared from ${appName}`,
@@ -54,9 +62,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       title: clip.title,
       description: clip.description || `Shared from ${appName}`,
       type: 'video.other',
-      ...(clip.thumbnail_path ? {
+      ...(thumbUrl ? {
         images: [{
-          url: `/api/media/files/${clip.thumbnail_path}`,
+          url: thumbUrl,
           width: 1280,
           height: 720,
         }],

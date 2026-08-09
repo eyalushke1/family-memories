@@ -8,6 +8,7 @@ import { getStorage } from '@/lib/storage'
 import { supabase } from '@/lib/supabase/client'
 import { canTranscode, getTranscodedPath } from '@/lib/media/formats'
 import { transcodeManager } from '@/lib/media/transcode-manager'
+import { isMediaRequestAllowed } from '@/lib/media/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -116,7 +117,7 @@ async function runTranscode(storagePath: string) {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path: pathSegments } = await params
@@ -124,6 +125,12 @@ export async function GET(
 
   if (!storagePath) {
     return NextResponse.json({ success: false, error: 'Path required' }, { status: 400 })
+  }
+
+  // Transcoding is expensive (ffmpeg + storage IO) — never let it be triggered
+  // by an unauthenticated caller.
+  if (!(await isMediaRequestAllowed(request, storagePath))) {
+    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
   }
 
   if (!canTranscode(storagePath)) {

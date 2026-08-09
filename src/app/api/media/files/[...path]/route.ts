@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getStorage } from '@/lib/storage'
 import { getContentType, isStreamingType } from '@/lib/media/formats'
+import { isMediaRequestAllowed } from '@/lib/media/access'
 
 // Route config for streaming large files
 export const dynamic = 'force-dynamic'
@@ -58,6 +59,10 @@ export async function HEAD(
     return new NextResponse(null, { status: 400 })
   }
 
+  if (!(await isMediaRequestAllowed(request, storagePath))) {
+    return new NextResponse(null, { status: 403 })
+  }
+
   try {
     const storage = getStorage()
     const contentType = getContentType(storagePath)
@@ -70,7 +75,7 @@ export async function HEAD(
           'Content-Type': contentType,
           'Content-Length': String(metadata.size),
           'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=604800',
+          'Cache-Control': 'private, max-age=604800',
         },
       })
     }
@@ -100,6 +105,10 @@ export async function GET(
     return NextResponse.json({ success: false, error: 'Path required' }, { status: 400 })
   }
 
+  if (!(await isMediaRequestAllowed(request, storagePath))) {
+    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
+  }
+
   try {
     const storage = getStorage()
     const contentType = getContentType(storagePath)
@@ -127,7 +136,7 @@ export async function GET(
               'Content-Length': String(chunkSize),
               'Content-Range': `bytes ${start}-${end}/${totalSize}`,
               'Accept-Ranges': 'bytes',
-              'Cache-Control': 'public, max-age=604800',
+              'Cache-Control': 'private, max-age=604800',
             },
           })
         }
@@ -144,7 +153,7 @@ export async function GET(
           'Content-Type': contentType,
           'Content-Length': String(totalSize),
           'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=604800',
+          'Cache-Control': 'private, max-age=604800',
         },
       })
     }
@@ -158,7 +167,7 @@ export async function GET(
         'Content-Type': contentType,
         'Content-Length': String(data.length),
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': 'private, max-age=86400',
       },
     })
   } catch (error) {
