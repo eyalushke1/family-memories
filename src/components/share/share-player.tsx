@@ -342,7 +342,9 @@ export function SharePlayer({ shareToken }: SharePlayerProps) {
           playsInline
           controls
           controlsList="nodownload"
-          preload={playIntroFirst ? 'metadata' : 'auto'}
+          // Once the intro is actually playing, buffer the main video so the
+          // handover is instant rather than stalling while it loads from cold.
+          preload={playIntroFirst && playState !== 'intro' ? 'metadata' : 'auto'}
           onEnded={handleMainEnded}
           onError={handleMainError}
           style={{

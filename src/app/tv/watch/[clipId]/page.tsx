@@ -242,6 +242,15 @@ export default function TVWatchPage() {
         console.log('[TV] Intro playing (muted)')
         setIsMuted(true)
         setIntroReady(true)
+
+        // Buffer the main video while the intro plays, so the handover to it is
+        // immediate instead of stalling while it loads from cold.
+        const mainVideo = mainVideoRef.current
+        if (mainVideo && mainVideo.preload !== 'auto') {
+          console.log('[TV] Preloading main video in background')
+          mainVideo.preload = 'auto'
+          mainVideo.load()
+        }
       } catch (err) {
         console.error('[TV] Intro play failed:', err)
         setIntroFailed(true)

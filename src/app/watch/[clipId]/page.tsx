@@ -339,11 +339,15 @@ export default function WatchPage() {
 
       if (success) {
         setIntroReady(true)
-        // Start preloading main video now that intro is playing
+        // Buffer the main video while the intro plays. 'metadata' only fetches
+        // headers, which left the main video with no data when the intro ended
+        // and caused a multi-second stall on the handover — use 'auto' so real
+        // data is in the buffer by then.
         const mainVideo = mainVideoRef.current
         if (mainVideo && mainVideo.preload !== 'auto') {
           console.log('[Player] Preloading main video in background')
-          mainVideo.preload = 'metadata'
+          mainVideo.preload = 'auto'
+          mainVideo.load()
         }
       } else {
         setIntroFailed(true)
@@ -1205,7 +1209,7 @@ export default function WatchPage() {
           controls={showMainVideo && !needsUserPlay}
           controlsList="nodownload"
           playsInline
-          preload={introClip ? 'none' : 'metadata'}
+          preload={introClip ? 'none' : 'auto'}
           onWaiting={handleMainWaiting}
           onPlaying={handleMainPlaying}
           onCanPlayThrough={handleMainCanPlayThrough}
